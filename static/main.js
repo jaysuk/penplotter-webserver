@@ -468,6 +468,66 @@ function hidePenChange() {
   if (modal.isToggled()) modal.hide();
 }
 
+// Plotter control: move the pen by hand
+function plotterAction(action, extra) {
+  const port = jQuery("#portList").val();
+  if (port == null) {
+    notify("No COM port selected", "danger");
+    updatePorts();
+    return Promise.resolve(null);
+  }
+  const form = new URLSearchParams({
+    port: port,
+    baudrate: jQuery("#baudRate").val(),
+    flowControl: jQuery("#flowControl").val(),
+  });
+  for (const key in extra || {}) form.append(key, extra[key]);
+
+  return axios
+    .post("/plotter/" + action, form.toString())
+    .then(function (response) {
+      return response.data;
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+      return null;
+    });
+}
+
+function jog(button) {
+  const step = Number(jQuery("#jogStep").val());
+  const dx = Number(jQuery(button).attr("data-dx")) * step;
+  const dy = Number(jQuery(button).attr("data-dy")) * step;
+  plotterAction("jog", { dx: dx, dy: dy });
+}
+
+function showPenPosition() {
+  plotterAction("position").then(function (position) {
+    if (!position) return;
+    jQuery("#penPosition").text(
+      "x " + position.x_mm + " mm, y " + position.y_mm + " mm, pen " + (position.pen_down ? "down" : "up")
+    );
+  });
+}
+
+function traceBounds() {
+  const file = jQuery("#fileName").val();
+  if (!/\.hpgl$/i.test(file)) {
+    notify("Select an *.hpgl file to trace", "danger");
+    return;
+  }
+  const draw = jQuery("#traceDraw").prop("checked");
+  const run = function () {
+    plotterAction("bounds", { file: file, draw: draw ? "1" : "0" });
+  };
+  if (draw) {
+    UIkit.modal.confirm("The pen will be lowered and draw a frame round the plot area. Continue?").then(run, function () {});
+  } else {
+    run();
+  }
+}
+
 // Plot history
 const HISTORY_LABELS = {
   completed: "uk-label-success",

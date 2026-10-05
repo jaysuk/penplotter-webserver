@@ -15,8 +15,8 @@ import pytest
 import fake_serial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'hpgl_analysis.py']
-APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'hpgl_analysis', 'convert_vpype']
+SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'hpgl_analysis.py', 'plotter_control.py']
+APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'hpgl_analysis', 'plotter_control', 'convert_vpype']
 
 
 @pytest.fixture(scope='session')
@@ -52,12 +52,13 @@ def env(tmp_path_factory):
     import globals as app_globals
     import history
     import hpgl_analysis
+    import plotter_control
 
     notification.telegram_sendNotification = lambda message: False
 
     yield types.SimpleNamespace(
         dir=work, main=main, send2serial=send2serial, tasmota=tasmota,
-        globals=app_globals, history=history, hpgl=hpgl_analysis, convert_stub=stub, serial=fake_serial)
+        globals=app_globals, history=history, hpgl=hpgl_analysis, control=plotter_control, convert_stub=stub, serial=fake_serial)
 
     os.chdir(saved_cwd)
     sys.path.remove(str(work))

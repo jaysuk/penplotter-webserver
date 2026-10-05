@@ -161,19 +161,24 @@ def getBaudRate(t_port):
     return None
 
 
-def open_port(socketio, port, baud, flowControl):
-    """Open and initialise the serial port for the given flow control. Returns None on failure."""
+def open_port(socketio, port, baud, flowControl, init=True):
+    """Open and initialise the serial port for the given flow control. Returns None on failure.
+
+    With `init` false the plotter is not set up (no IN;), so it keeps its state: that is for
+    moving the pen by hand."""
     try:
         if flowControl == 'XON/XOFF':
             tty = serial.Serial(port=port, baudrate=baud, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, xonxoff=True, timeout=2.0)
-            tty.write(b'IN;\033.I80;;17:\033.N10;19:\033.@;0:')
+            if init:
+                tty.write(b'IN;\033.I80;;17:\033.N10;19:\033.@;0:')
         elif flowControl == 'HP-IB':
             tty = serial.Serial(port=port, baudrate=9600, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, rtscts=True, timeout=2.0)
         else:
             # CTS is polled by hand (see sendToPlotter) because of a pyserial bug with rtscts
             tty = serial.Serial(port=port, baudrate=baud, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, timeout=2.0)
-            tty.write(b'IN;\033.R')
-            time.sleep(0.2)
+            if init:
+                tty.write(b'IN;\033.R')
+                time.sleep(0.2)
         return tty
     except PORT_ERRORS as e:
         socketio.emit('error', {'data': repr(e)})
@@ -188,6 +193,29 @@ def abort_plot(tty):
         tty.write(b'PU;')     # pen up
     except PORT_ERRORS as e:
         print(repr(e))
+
+
+def run_commands(socketio, port, baud, flowControl, commands, query=None):
+    """Send a few short commands to an idle plotter, such as moving the pen.
+
+    `query` (for example b'OA;') is sent last and its answer returned. Raises HPGLError when the
+    plotter does not answer; returns None when the port cannot be opened (the reason goes to
+    `socketio` as an error event). The caller must make sure no plot is running."""
+    tty = open_port(socketio, port, baud, flowControl, init=False)
+    if tty is None:
+        return None
+    try:
+        for command in commands:
+            tty.write(command)
+        if query is not None:
+            tty.reset_input_buffer()
+            return getReplySTR(tty, query)
+        return ''
+    except PORT_ERRORS as e:
+        socketio.emit('error', {'data': repr(e)})
+        return None
+    finally:
+        tty.close()
 
 
 ETA_EVERY = 5   # seconds between time left updates (they are also sent when the percentage moves)

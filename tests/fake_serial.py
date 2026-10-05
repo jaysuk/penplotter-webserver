@@ -31,6 +31,8 @@ class Serial:
             self.buf += b'1024\r'
         elif data == b'IN;OI;':
             self.buf += b'7475A\r'
+        elif data == b'OA;':
+            self.buf += b'4019,-2009,1\r'
         elif data[:1] not in (b'\033', b'I', b'P'):
             time.sleep(0.0002)
             if Serial.on_data:
@@ -43,6 +45,8 @@ class Serial:
         return out
 
     def read_until(self, *args, **kwargs):
+        if Serial.no_reply:
+            return b''
         out, self.buf = self.buf, b''
         return out
 

@@ -308,6 +308,103 @@
         </div>
         <!-- /Settings -->
 
+        <!-- Plotter control -->
+        <div class="uk-width-1-2@l">
+          <div class="uk-card uk-card-default uk-card-small mac-card">
+            <div class="uk-card-header mac-browser-bar">
+              <div class="uk-grid uk-grid-small">
+                <div class="uk-width-auto">
+                  <h4>Plotter Control</h4>
+                </div>
+                <div class="uk-width-expand uk-text-right panel-icons">
+                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
+                    data-uk-icon="icon: move"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="plotterControl-card"
+                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="plotterControl-card"
+                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
+                </div>
+              </div>
+            </div>
+            <div id="plotterControl-card" class="uk-card-body">
+              <div class="chart-container">
+                <p class="uk-text-small uk-text-muted uk-margin-small-bottom">
+                  Move the pen to line up the paper. Uses the port and settings chosen in Plotter Settings, and is
+                  not available while plotting.</p>
+                <div class="uk-grid uk-grid-small" data-uk-grid>
+                  <div class="uk-width-auto">
+                    <div class="uk-grid uk-grid-collapse uk-child-width-1-3 jog-pad">
+                      <div></div>
+                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="1"
+                          title="Up (away from you)" data-uk-icon="icon: arrow-up"></button></div>
+                      <div></div>
+                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="-1" data-dy="0"
+                          title="Left" data-uk-icon="icon: arrow-left"></button></div>
+                      <div><button class="uk-button uk-button-default uk-width-1-1 plotterAction lock-edit" data-action="origin"
+                          title="Go to the plotter's origin (0,0)" data-uk-icon="icon: home"></button></div>
+                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="1" data-dy="0"
+                          title="Right" data-uk-icon="icon: arrow-right"></button></div>
+                      <div></div>
+                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="-1"
+                          title="Down (towards you)" data-uk-icon="icon: arrow-down"></button></div>
+                      <div></div>
+                    </div>
+                  </div>
+                  <div class="uk-width-expand">
+                    <label class="uk-form-label" for="jogStep">Step</label>
+                    <select id="jogStep" class="uk-select uk-margin-small-bottom">
+                      <option value="0.5">0.5 mm</option>
+                      <option value="1">1 mm</option>
+                      <option value="5" selected>5 mm</option>
+                      <option value="10">10 mm</option>
+                      <option value="50">50 mm</option>
+                    </select>
+                    <div class="uk-button-group uk-width-1-1 uk-margin-small-bottom">
+                      <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_up">Pen up</button>
+                      <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_down">Pen down</button>
+                    </div>
+                    <div class="uk-grid uk-grid-small" data-uk-grid>
+                      <div class="uk-width-expand">
+                        <select id="selectPen" class="uk-select">
+                          <option value="0">Put pen away (0)</option>
+                          <option value="1" selected>Pen 1</option>
+                          <option value="2">Pen 2</option>
+                          <option value="3">Pen 3</option>
+                          <option value="4">Pen 4</option>
+                          <option value="5">Pen 5</option>
+                          <option value="6">Pen 6</option>
+                          <option value="7">Pen 7</option>
+                          <option value="8">Pen 8</option>
+                        </select>
+                      </div>
+                      <div class="uk-width-auto">
+                        <button class="uk-button uk-button-default selectPenButton lock-edit">Pick</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <hr>
+                <div class="uk-grid uk-grid-small uk-flex-middle" data-uk-grid>
+                  <div class="uk-width-expand">
+                    <button class="uk-button uk-button-default uk-width-1-1 traceBounds lock-edit"
+                      title="Move the lifted pen round the area the selected file will draw in">Trace plot area</button>
+                  </div>
+                  <div class="uk-width-auto">
+                    <label class="uk-text-small"><input id="traceDraw" class="uk-checkbox" type="checkbox"> Draw it</label>
+                  </div>
+                </div>
+                <div class="uk-grid uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
+                  <div class="uk-width-auto">
+                    <button class="uk-button uk-button-default plotterPosition lock-edit">Where is the pen?</button>
+                  </div>
+                  <div class="uk-width-expand uk-text-small uk-text-muted" id="penPosition"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /Plotter control -->
+
         <!-- Status -->
         <div class="uk-width-1-2@l">
           <div class="uk-card uk-card-default uk-card-small mac-card">
@@ -1038,6 +1135,32 @@
       // Pens to plot
       jQuery(document).on('change', '.penChoice', function () {
         updatePenSelection();
+      });
+
+      // Plotter control
+      jQuery(document).on('click', '.jogButton', function (e) {
+        e.preventDefault();
+        jog(this);
+      });
+
+      jQuery(document).on('click', '.plotterAction', function (e) {
+        e.preventDefault();
+        plotterAction(jQuery(this).attr('data-action'));
+      });
+
+      jQuery(document).on('click', '.selectPenButton', function (e) {
+        e.preventDefault();
+        plotterAction('select_pen', { pen: jQuery('#selectPen').val() });
+      });
+
+      jQuery(document).on('click', '.traceBounds', function (e) {
+        e.preventDefault();
+        traceBounds();
+      });
+
+      jQuery(document).on('click', '.plotterPosition', function (e) {
+        e.preventDefault();
+        showPenPosition();
       });
 
       // Clear Log

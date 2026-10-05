@@ -22,6 +22,7 @@ import globals
 import history
 import hpgl_analysis
 import notification
+import plotter_control
 import send2serial
 import tasmota
 from convert_vpype import convert_file
@@ -162,7 +163,7 @@ def upload_file_path(name):
 
 
 def valid_baudrate(value):
-    return isinstance(value, str) and value.isdigit() and 300 <= int(value) <= 921600
+    return isinstance(value, str) and re.fullmatch(r'[0-9]+', value) is not None and 300 <= int(value) <= 921600
 
 
 def check_vpype_command(command):
@@ -396,6 +397,85 @@ def analyze_file():
     except OSError as e:
         return 'Could not read the file: ' + str(e), 500
     return jsonify({'summary': hpgl_analysis.summary(analysis, history.correction()), 'busy': False})
+
+
+class ErrorCollector:
+    """Stands in for socketio and keeps the error that send2serial reports, for the response."""
+
+    def __init__(self):
+        self.errors = []
+
+    def emit(self, name, data=None, **kwargs):
+        if name == 'error':
+            self.errors.append(str(data.get('data')))
+
+
+def plotter_commands(action, form):
+    """The HPGL for a manual pen action, as (commands, query) or (None, error message)."""
+    control = plotter_control
+    if action == 'jog':
+        dx, dy = control.parse_mm(form.get('dx', '')), control.parse_mm(form.get('dy', ''))
+        if dx is None or dy is None:
+            return None, 'Invalid distance'
+        return control.jog(dx, dy), None
+    if action == 'pen_up':
+        return control.pen_up(), None
+    if action == 'pen_down':
+        return control.pen_down(), None
+    if action == 'origin':
+        return control.origin(), None
+    if action == 'select_pen':
+        pen = form.get('pen', '')
+        commands = control.select_pen(int(pen)) if re.fullmatch(r'[0-8]', pen) else None
+        return (commands, None) if commands else (None, 'Invalid pen')
+    if action == 'position':
+        return [], b'OA;'
+    if action == 'bounds':
+        path = upload_file_path(form.get('file'))
+        if not path or not path.lower().endswith('.hpgl') or not os.path.isfile(path):
+            return None, 'Please select a valid .hpgl file'
+        analysis = hpgl_analysis.analyze_cached(path)
+        if analysis is None or analysis['bounds'] is None:
+            return None, 'The file draws nothing, or is too large, to trace its area'
+        return control.trace_bounds(analysis['bounds'], draw=form.get('draw') == '1'), None
+    return None, 'Unknown action'
+
+
+# Move the pen by hand: jog, pen up/down, pick a pen, trace the plot area
+@app.route('/plotter/<action>', methods=['POST'])
+def plotter_action(action):
+    port = request.form.get('port', '')
+    if not PORT_RE.fullmatch(port):
+        return 'Please select a valid COM port', 400
+    baudrate = request.form.get('baudrate')
+    if not valid_baudrate(baudrate):
+        return 'Invalid baudrate', 400
+    flowControl = request.form.get('flowControl')
+    if flowControl not in FLOW_CONTROLS:
+        return 'Invalid flow control', 400
+    commands, query = plotter_commands(action, request.form)
+    if commands is None:
+        return query, 400
+
+    # The serial port belongs to a plot while there is one
+    if not plot_lock.acquire(blocking=False):
+        return 'The plotter is busy', 409
+    try:
+        collector = ErrorCollector()
+        try:
+            reply = send2serial.run_commands(collector, port, int(baudrate), flowControl, commands, query)
+        except send2serial.HPGLError as e:
+            return 'The plotter did not answer: ' + str(e), 504
+    finally:
+        plot_lock.release()
+    if reply is None:
+        return 'Could not use the port: ' + ' '.join(collector.errors), 500
+    if query is not None:
+        position = plotter_control.parse_position(reply)
+        if position is None:
+            return 'Unexpected answer from the plotter', 502
+        return jsonify(position)
+    return 'OK'
 
 
 # Recent plots, newest first
