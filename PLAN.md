@@ -6,17 +6,19 @@ Written for the project owner. It covers items 11 to 20 of the outstanding list.
 Items 1 to 6 of that list need a plotter. Items 7 to 10 (the pages in a browser, PDF import) were done on
 a Pi on 2026-10-05: see "Pi session: results" at the end, which also changed items 16, 17a and 19 below.
 
-## Found while writing this plan (do first)
+## Found while writing this plan: CI was red (fixed 2026-10-05)
 
-| What | Detail |
-|---|---|
-| **CI is red on `PiPlot`** | Two separate causes, both seen on the push of 7a38cfe. |
-| Tests, Python 3.9 job | `tests/test_backup.py` used `sqlite3.Connection.deserialize`, which needs Python 3.11. The app code is fine. **Fixed locally, not pushed yet** (3.11 and 3.13 jobs passed). |
-| Installer job, all three Pi images | `install.sh` stops with "Do not run this installer with sudo". The workflow runs it through `sudo -E chroot`, which passes `SUDO_USER=runner` into the chroot, and the check at `install.sh:153` reads that as `sudo bash install.sh`. The check was added in 2657c5c and CI has failed on every push since (last green: 0563e81). It is not caused by Phase 3 or 4. One run (4954213, Zero_W) also failed with apt exit code 100, which may be a separate problem. See item 16. |
+CI is green on `PiPlot` again (79a241c): the tests on Python 3.9, 3.11 and 3.13, the JavaScript tests, and the installer on Zero W, Zero 2 W and Zero 2 W 64-bit. Three separate causes:
+- **Python 3.9 test job:** `tests/test_backup.py` used `sqlite3.Connection.deserialize` (Python 3.11 and later). The app code was fine. Fixed in the test.
+- **Installer job, "Do not run this installer with sudo":** the workflow runs the installer through `sudo -E chroot`, which leaks `SUDO_USER` into the chroot. The check in `install.sh` (added in 2657c5c) read that as `sudo bash install.sh`, and the job had failed on every push since. Fixed by `unset SUDO_USER ...` in the workflow.
+- **Installer job, "Your home folder /home/runner does not belong to root":** the same `sudo -E` leaks `HOME=/home/runner`, which is not root's and does not exist in the chroot. This one was hidden behind the first. Fixed by `export HOME=/root` in the workflow.
+- **One flaky job** failed with apt exit code 100: the Raspbian mirror `mirror.pyratelan.org` could not be reached over IPv6. That is not ours, a re-run passed, and it is probably what the earlier "exit code 100" on 4954213 was. If it keeps happening, retry `apt-get install` in the workflow.
+
+`install.sh` itself was not changed: its two guards protect people who run `sudo bash install.sh`.
 
 ## Order
 
-1. Fix CI (item 16, first two steps). Everything else is easier to trust when CI is green.
+1. ~~Fix CI~~ (done, see above).
 2. Cheap and independent: 14 (Telegram token), 18c/18d (small UI gaps), 17b (file name length guard), 17c (schema version).
 3. Pi session (see the end), which unlocks 16 (real installer run), 17a (conversion load) and 19 (flaky tests on Linux).
 4. Decisions that need you: 11 (timelapse), 12 (MP4200 and page sizes), 13 (GPIO buttons), 15 (more options).
@@ -92,9 +94,9 @@ Each is S to M plus an experimental label until tried on a plotter.
 ## 16. Installer CI and the installer itself
 
 **Steps:**
-1. **Fix the CI failure (S).** In `.github/workflows/install_test.yml`, `unset SUDO_USER` before running `$installer` (the workflow already knows it runs as root in a chroot). Keep the real check in `install.sh` untouched, because it protects people running `sudo bash install.sh`. Add a one-line comment in the workflow saying why.
-2. **Fix my test (done locally)** and push both together, then watch all four jobs.
-3. Re-run the Zero_W job and read the apt exit code 100 from 4954213 (it may be a transient mirror error, or `poppler-utils` failing). `install.sh` is supposed to treat poppler as non-fatal; confirm that.
+1. ~~Fix the CI failure.~~ Done: `unset SUDO_USER` and `export HOME=/root` in the workflow.
+2. ~~Fix my test.~~ Done.
+3. ~~Read the apt exit code 100.~~ A mirror outage, see above. (The installer jobs now also prove `poppler-utils` installs without failing the run.)
 4. Make sure the new dependency `paho-mqtt` installs on the 32-bit image (pure Python, so it should) and that `import paho.mqtt.publish` works there. Add that import to the workflow's smoke test as a non-fatal warning, like other optional pieces.
 5. Add a workflow step that checks `requirements.txt` against the imports in the app (every third-party import has a line), so a missing dependency fails CI instead of a user's Pi.
 6. ~~Real install on your Pi~~ **Done by you at 13:18 on 2026-10-05:** the update path ran on the Pi Zero 2 W (Trixie 64-bit, Python 3.13), `paho-mqtt` 2.1.0 installed from piwheels, `poppler-utils` was present, the service restarted on 7a38cfe and `uploads/`, `config.ini` and `history.db` were intact. So the installer works on real hardware; only the CI job is broken (steps 1 to 3).
