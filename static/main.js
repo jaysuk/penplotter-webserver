@@ -722,6 +722,23 @@ function formatDuration(seconds) {
   return s + " s";
 }
 
+// Buttons of a history row: the ids are numbers from the server, the labels are fixed text
+function historyActions(job) {
+  if (!job.can_replot || job.status == "running") return "";
+  const id = Number(job.id);
+  return `<a href="#" class="uk-button uk-button-default uk-button-small replotJob" data-job="${id}" ` +
+    `title="Plot this file again with the same settings">Plot again</a>`;
+}
+
+function replotJob(id) {
+  axios
+    .post("/replot", new URLSearchParams({ job: id }))
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
+}
+
 function updateHistory() {
   return axios
     .get("/job_history")
@@ -738,7 +755,8 @@ function updateHistory() {
           `<tr><td>${escapeHtml(new Date(job.started_at * 1000).toLocaleString())}</td>` +
             `<td>${escapeHtml(job.file)}</td>` +
             `<td><span class="uk-label ${label}"${title}>${status}</span>${escapeHtml(percent)}</td>` +
-            `<td>${escapeHtml(done)}</td></tr>`
+            `<td>${escapeHtml(done)}</td>` +
+            `<td class="uk-text-nowrap">${historyActions(job)}</td></tr>`
         );
       }
     })

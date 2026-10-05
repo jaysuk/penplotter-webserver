@@ -309,11 +309,16 @@ def prepare_plot_file(events, file, analysis, pens):
     return path, hpgl_analysis.analyze(path), path
 
 
-def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None):
+def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None,
+         options=None):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock."""
     global current_plot
     events = PlotEvents()
-    job = history.start(os.path.basename(file), port, baudrate, flowControl)
+    try:
+        file_size = os.path.getsize(file)
+    except OSError:
+        file_size = None
+    job = history.start(os.path.basename(file), port, baudrate, flowControl, options, file_size)
     outcome, error = None, None
     temporary = None
     try:
@@ -604,7 +609,12 @@ def plotter_action(action):
 # Recent plots, newest first
 @app.route('/job_history', methods=['GET'])
 def job_history():
-    return jsonify(history.recent())
+    jobs = history.recent()
+    for job in jobs:
+        path = upload_file_path(job['file'])
+        job['can_replot'] = bool(path and os.path.isfile(path))
+        job.pop('options', None)
+    return jsonify(jobs)
 
 @app.route('/clear_history', methods=['POST'])
 def clear_history():
@@ -641,62 +651,107 @@ def delete_file():
         socketio.emit('error', {'data': 'The file does not exist'})
         return 'The file does not exist', 404
 
-# Get Plotter settings from UI
-@app.route('/start_plot', methods=['POST'])
-def start_plot():
-    global current_plot
-    name = request.form.get('file')
+def plot_request(values):
+    """Check the settings of a plot (the form of /start_plot, a stored job or a queue entry).
+
+    Returns (request, None), or (None, (message, status)). The request holds the file's name and
+    path, `options` (the settings as strings, for the history and the queue), the pens to plot
+    and the analysis that was needed to pick them."""
+    name = values.get('file')
     path = upload_file_path(name)
     if not path or not path.lower().endswith('.hpgl') or not os.path.isfile(path):
-        return 'Please select a valid .hpgl file', 400
+        return None, ('Please select a valid .hpgl file', 400)
 
-    port = request.form.get('port', '')
+    port = values.get('port') or ''
     if not PORT_RE.fullmatch(port):
-        return 'Please select a valid COM port', 400
-    baudrate = request.form.get('baudrate')
+        return None, ('Please select a valid COM port', 400)
+    baudrate = values.get('baudrate')
     if not valid_baudrate(baudrate):
-        return 'Invalid baudrate', 400
-    flowControl = request.form.get('flowControl')
+        return None, ('Invalid baudrate', 400)
+    flowControl = values.get('flowControl')
     if flowControl not in FLOW_CONTROLS:
-        return 'Invalid flow control', 400
-    poweroff = request.form.get('tasmota')
-    timelapse = request.form.get('timelapse')
+        return None, ('Invalid flow control', 400)
 
-    pen_change = request.form.get('pen_change') or config_value('plotter', 'pen_change') or 'auto'
+    pen_change = values.get('pen_change') or config_value('plotter', 'pen_change') or 'auto'
     if pen_change not in PEN_CHANGES:
-        return 'Invalid pen change mode', 400
+        return None, ('Invalid pen change mode', 400)
     pens = None
     analysis = None
-    pens_text = request.form.get('pens') or ''
+    pens_text = values.get('pens') or ''
     if pens_text:
         if not PENS_RE.fullmatch(pens_text):
-            return 'Invalid pens', 400
+            return None, ('Invalid pens', 400)
         pens = sorted({int(pen) for pen in pens_text.split(',')})
         # Picking pens needs the file's pens: the analysis is cached after the preview
         analysis = hpgl_analysis.analyze_cached(path)
         if analysis is None:
-            return 'This file is too large to pick pens from', 400
+            return None, ('This file is too large to pick pens from', 400)
         used = {segment['pen'] for segment in analysis['segments']}
         if not used.intersection(pens):
-            return 'The file does not draw with the selected pens', 400
+            return None, ('The file does not draw with the selected pens', 400)
         if used.issubset(pens):
             pens = None     # every pen is wanted: plot the file as it is
             analysis = None
 
-    # Only one plot at a time
+    options = {'file': name, 'port': port, 'baudrate': str(baudrate), 'flowControl': flowControl,
+               'tasmota': values.get('tasmota') or '', 'timelapse': values.get('timelapse') or '',
+               'pens': pens_text, 'pen_change': pen_change}
+    return {'name': name, 'path': path, 'options': options, 'pens': pens, 'analysis': analysis}, None
+
+
+def claim_plot(name):
+    """Take the plot lock for a new plot and forget the last one. False when a plot is running."""
+    global current_plot
     if not plot_lock.acquire(blocking=False):
-        return 'A plot is already running', 409
+        return False
     current_plot = name
     globals.clear_wait()
     globals.stop_requested = False
     globals.plot_finished = False
     globals.reset_plot_state()
+    return True
 
-    # Plots run for a long time, so don't block the request
-    socketio.start_background_task(plot, path, port, baudrate, flowControl, poweroff, timelapse,
-                                   pens, pen_change, analysis)
 
+def begin_plot(values):
+    """Start a plot in a background task (they run for a long time, so the request must not wait)."""
+    request_, error = plot_request(values)
+    if error:
+        return error
+    # Only one plot at a time
+    if not claim_plot(request_['name']):
+        return 'A plot is already running', 409
+    options = request_['options']
+    socketio.start_background_task(plot, request_['path'], options['port'], options['baudrate'],
+                                   options['flowControl'], options['tasmota'], options['timelapse'],
+                                   request_['pens'], options['pen_change'], request_['analysis'],
+                                   options=options)
     return 'Plot started'
+
+
+# Get Plotter settings from UI
+@app.route('/start_plot', methods=['POST'])
+def start_plot():
+    return begin_plot(request.form)
+
+
+def job_values(job):
+    """The settings a stored plot was started with. Plots from before they were kept fall back to
+    the columns every plot has."""
+    values = dict(job.get('options') or {})
+    values.setdefault('file', job['file'])
+    values.setdefault('port', job['port'])
+    values.setdefault('baudrate', str(job['baudrate']))
+    values.setdefault('flowControl', job['flow_control'])
+    return values
+
+
+# Plot a file from the history again, with the settings it had
+@app.route('/replot', methods=['POST'])
+def replot():
+    job = history.get(request.form.get('job'))
+    if job is None:
+        return 'No such plot', 404
+    return begin_plot(job_values(job))
 
 # Stop the printing process
 @app.route('/stop_plot', methods=['POST'])

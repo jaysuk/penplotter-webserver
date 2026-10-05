@@ -33,5 +33,5 @@ Open:
 - [ ] The Telegram token is still sent back to the browser in clear text by `GET /save_configfile`
       (the login password is not).
 - [ ] Plot queue (several files in a row). The history exists, a queue does not.
-- [ ] Plot history: no way to re-plot a file from a history row, and a deleted file stays listed by name.
+- [x] Plot history: "Plot again" from a history row (a deleted file stays listed by name, without the button)
 - [ ] More plotter options?

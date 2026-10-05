@@ -3,6 +3,7 @@
 Nothing here may break plotting: every function catches database errors, prints them and carries on.
 """
 import contextlib
+import json
 import sqlite3
 import threading
 import time
@@ -30,7 +31,10 @@ def _connect():
 
 # Columns added after the first release: (name, type). A database made by an older version gets them
 # when the server starts.
-NEW_COLUMNS = (('estimate_s', 'REAL'), ('drawn_s', 'REAL'))
+NEW_COLUMNS = (('estimate_s', 'REAL'), ('drawn_s', 'REAL'),
+               ('options', 'TEXT'),             # the form the plot was started with (JSON), for plotting again
+               ('file_size', 'INTEGER'),        # size of the file when it was plotted, to spot a changed file
+               ('resume_offset', 'INTEGER'))    # where to carry on after a stop or failure
 
 
 def _add_missing_columns(conn):
@@ -70,14 +74,17 @@ def init():
         print('Plot history unavailable:', repr(e))
 
 
-def start(file, port, baudrate, flow_control):
-    """Record a plot that is starting. Returns its id, or None if it could not be recorded."""
+def start(file, port, baudrate, flow_control, options=None, file_size=None):
+    """Record a plot that is starting. Returns its id, or None if it could not be recorded.
+
+    `options` is the dict of form values the plot was started with."""
     try:
         with _lock, _connect() as conn:
             cursor = conn.execute(
-                'INSERT INTO jobs (file, port, baudrate, flow_control, started_at, status) '
-                'VALUES (?, ?, ?, ?, ?, ?)',
-                (file, port, int(baudrate), flow_control, time.time(), RUNNING))
+                'INSERT INTO jobs (file, port, baudrate, flow_control, started_at, status, options, file_size) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (file, port, int(baudrate), flow_control, time.time(), RUNNING,
+                 json.dumps(options) if options else None, file_size))
             job = cursor.lastrowid
             # Keep the table small: drop the oldest finished plots
             conn.execute('DELETE FROM jobs WHERE status != ? AND id NOT IN '
@@ -99,16 +106,27 @@ def set_estimate(job, seconds):
         print('Could not record the plot estimate:', repr(e))
 
 
-def finish(job, status, progress=0, error=None, drawn_s=None):
-    """`drawn_s` is the time spent drawing (without pauses), for the estimate's correction."""
+def finish(job, status, progress=0, error=None, drawn_s=None, resume_offset=None):
+    """`drawn_s` is the time spent drawing (without pauses), for the estimate's correction.
+    `resume_offset` is where a stopped or failed plot can carry on (a byte offset in the file)."""
     if job is None:
         return
     try:
         with _lock, _connect() as conn:
-            conn.execute('UPDATE jobs SET status = ?, finished_at = ?, progress = ?, error = ?, drawn_s = ? '
-                         'WHERE id = ?', (status, time.time(), int(progress or 0), error, drawn_s, job))
+            conn.execute('UPDATE jobs SET status = ?, finished_at = ?, progress = ?, error = ?, drawn_s = ?, '
+                         'resume_offset = ? WHERE id = ?',
+                         (status, time.time(), int(progress or 0), error, drawn_s, resume_offset, job))
     except (sqlite3.Error, ValueError) as e:
         print('Could not update the plot history:', repr(e))
+
+
+def _row(row):
+    job = dict(row)
+    try:
+        job['options'] = json.loads(job['options']) if job.get('options') else None
+    except ValueError:
+        job['options'] = None
+    return job
 
 
 def recent(limit=50):
@@ -116,10 +134,21 @@ def recent(limit=50):
     try:
         with _lock, _connect() as conn:
             rows = conn.execute('SELECT * FROM jobs ORDER BY id DESC LIMIT ?', (int(limit),)).fetchall()
-        return [dict(row) for row in rows]
+        return [_row(row) for row in rows]
     except sqlite3.Error as e:
         print('Plot history unavailable:', repr(e))
         return []
+
+
+def get(job):
+    """One plot by id, or None."""
+    try:
+        with _lock, _connect() as conn:
+            row = conn.execute('SELECT * FROM jobs WHERE id = ?', (int(job),)).fetchone()
+        return _row(row) if row else None
+    except (sqlite3.Error, ValueError, TypeError) as e:
+        print('Plot history unavailable:', repr(e))
+        return None
 
 
 def correction(limit=10):

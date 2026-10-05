@@ -463,7 +463,7 @@
               <div class="chart-container uk-panel uk-panel-scrollable">
                 <table class="uk-table uk-table-small uk-table-divider uk-table-responsive">
                   <thead>
-                    <tr><th>Started</th><th>File</th><th>Result</th><th>Time</th></tr>
+                    <tr><th>Started</th><th>File</th><th>Result</th><th>Time</th><th></th></tr>
                   </thead>
                   <tbody id="historyList"></tbody>
                 </table>
@@ -1387,6 +1387,11 @@
       jQuery(document).on('click', '.updateHistory', function (e) {
         e.preventDefault();
         updateHistory();
+      });
+
+      jQuery(document).on('click', '.replotJob', function (e) {
+        e.preventDefault();
+        replotJob(jQuery(this).data('job'));
       });
 
       jQuery(document).on('click', '.clearHistory', function (e) {
