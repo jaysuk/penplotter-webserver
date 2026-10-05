@@ -12,3 +12,4 @@ vpype/*
 clear.sh
 compile.py
 __pycache__/
+cache/

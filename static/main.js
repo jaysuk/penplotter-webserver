@@ -101,6 +101,75 @@ function selectFile(element) {
 
   // Update sidebar
   jQuery(".selectedFilename").text(filename);
+
+  loadFileInfo(filename);
+}
+
+// What the selected file draws: size, time estimate and pens
+var fileInfoRequest = 0;
+
+function clearFileInfo() {
+  jQuery("#fileInfo").addClass("uk-hidden");
+  jQuery("#penChoices").addClass("uk-hidden");
+  jQuery("#penChoiceList").empty();
+  jQuery("#plotPens").val("");
+}
+
+function loadFileInfo(filename) {
+  clearFileInfo();
+  if (!/\.hpgl$/i.test(filename)) return;
+
+  const request = ++fileInfoRequest;
+  axios
+    .get("/analyze", { params: { file: filename } })
+    .then(function (response) {
+      // A newer selection has been made meanwhile
+      if (request !== fileInfoRequest) return;
+      showFileInfo(response.data);
+    })
+    .catch(function (error) {
+      if (request === fileInfoRequest) console.error(error);
+    });
+}
+
+function showFileInfo(data) {
+  const summary = data.summary;
+  if (!summary) {
+    // Busy plotting (nothing cached) or too large to analyse: the plot still works
+    jQuery("#fileInfoText").text(
+      data.busy ? "Details are not available while plotting." : "This file is too large to estimate."
+    );
+    jQuery("#fileInfo").removeClass("uk-hidden");
+    return;
+  }
+
+  let text =
+    "About " + formatDuration(summary.seconds) + " to plot, " +
+    summary.width_mm.toFixed(0) + " x " + summary.height_mm.toFixed(0) + " mm, " +
+    summary.paths + " lines, " + (summary.draw_mm / 1000).toFixed(1) + " m drawn.";
+  if (summary.unsupported.length > 0) {
+    text += " Not counted: " + summary.unsupported.join(", ") + ".";
+  }
+  jQuery("#fileInfoText").text(text);
+
+  const list = jQuery("#penChoiceList").empty();
+  if (summary.pens.length > 1) {
+    for (const pen of summary.pens) {
+      const label = jQuery("<label/>");
+      jQuery("<input/>", { type: "checkbox", class: "uk-checkbox penChoice", value: pen.pen, checked: true }).appendTo(label);
+      label.append(document.createTextNode(" Pen " + pen.pen + " (" + formatDuration(pen.seconds) + ")"));
+      jQuery("<div/>").append(label).appendTo(list);
+    }
+    jQuery("#penChoices").removeClass("uk-hidden");
+  }
+  jQuery("#fileInfo").removeClass("uk-hidden");
+}
+
+// The pens to plot go to the server only when some of them are left out
+function updatePenSelection() {
+  const all = jQuery(".penChoice");
+  const chosen = all.filter(":checked").map(function () { return this.value; }).get();
+  jQuery("#plotPens").val(chosen.length === all.length ? "" : chosen.join(","));
 }
 
 // Handle file deletion
@@ -272,6 +341,11 @@ function startPlot() {
     updatePorts();
     return false;
   }
+  if (jQuery(".penChoice").length > 0 && jQuery(".penChoice:checked").length === 0) {
+    notify("Select at least one pen to plot", "danger");
+    return false;
+  }
+  updatePenSelection();
 
   axios
     .post("/start_plot", jQuery("#plotterData").serialize())
@@ -338,6 +412,14 @@ function applyPlotState(state) {
   jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
   jQuery(".resumePlot").toggleClass("uk-hidden", !state.paused);
 
+  // Held back for a manual pen change: ask for the pen, and close the question when it is over
+  if (state.running && state.paused && state.wait_reason === "pen_change") {
+    showPenChange(state.pen);
+  } else {
+    hidePenChange();
+  }
+  setEta(state.running ? state.eta : null);
+
   if (state.running && state.file) {
     jQuery(".selectedFilename").text(state.file);
   }
@@ -365,6 +447,25 @@ function applyPlotState(state) {
       else appendStatusLog(entry.text);
     }
   }
+}
+
+// Time left
+function setEta(eta) {
+  const text = eta ? "Time left: about " + formatDuration(eta.remaining) + " (of " + formatDuration(eta.total) + ")" : "";
+  jQuery(".etaText").text(text);
+}
+
+// Pen change dialog
+function showPenChange(pen) {
+  jQuery("#penChangeNumber").text(pen);
+  if (!UIkit.modal("#modal-penChange").isToggled()) {
+    UIkit.modal("#modal-penChange").show();
+  }
+}
+
+function hidePenChange() {
+  const modal = UIkit.modal("#modal-penChange");
+  if (modal.isToggled()) modal.hide();
 }
 
 // Plot history
@@ -486,6 +587,9 @@ function updateConfiguration() {
         jQuery("#device").val(response.data.plotter_device).change();
         jQuery("#baudRate").val(response.data.plotter_baudrate).change();
         jQuery("#flowControl").val(response.data.plotter_flowControl).change();
+        if (response.data.plotter_pen_change) {
+          jQuery("#penChange").val(response.data.plotter_pen_change);
+        }
 
         if (String(response.data.tasmota_enable).toLowerCase() == "true") {
           jQuery("#tasmota_control").removeClass("uk-hidden");
@@ -530,6 +634,7 @@ function actionOpenConfig() {
         jQuery("#plotter_flowControl")
           .val(response.data.plotter_flowControl)
           .change();
+        jQuery("#plotter_pen_change").val(response.data.plotter_pen_change || "auto");
 
         UIkit.modal("#modal-configFile").show();
       }

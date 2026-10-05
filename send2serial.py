@@ -1,3 +1,4 @@
+import collections
 import time
 import math
 import os
@@ -7,6 +8,7 @@ from serial import SerialException
 
 import notification
 import globals
+import hpgl_analysis
 # Shared, live configuration object (updated when settings are saved in the UI)
 from config import config
 
@@ -188,8 +190,14 @@ def abort_plot(tty):
         print(repr(e))
 
 
-def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
-    """Stream an HPGL file to the plotter. Returns True if the plot finished or was stopped."""
+ETA_EVERY = 5   # seconds between time left updates (they are also sent when the percentage moves)
+
+
+def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0):
+    """Stream an HPGL file to the plotter. Returns True if the plot finished or was stopped.
+
+    `analysis` (from hpgl_analysis) gives the time left. With `pen_pause` the plot also holds
+    back at every pen change until it is resumed, so the pen can be swapped by hand."""
 
     PLOTTER_NAME = config.get('plotter', 'name', fallback='Plotter')
     notify_name = PLOTTER_NAME.replace(' ', '-')
@@ -235,6 +243,22 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
 
         total_bytes_written = 0
 
+        if analysis is not None and analysis.get('bytes') != input_bytes:
+            analysis = None     # the file changed after it was analysed
+        pen_stops = collections.deque(hpgl_analysis.pen_changes(analysis) if analysis and pen_pause else ())
+        total_estimate = analysis['seconds'] * correction if analysis else None
+        last_eta = 0
+        paused_since = None
+        paused_time = 0.0
+
+        def send_eta(offset):
+            nonlocal last_eta
+            if total_estimate is None:
+                return
+            remaining = max(total_estimate - hpgl_analysis.time_at(analysis, offset) * correction, 0)
+            socketio.emit('eta', {'data': {'remaining': round(remaining), 'total': round(total_estimate)}})
+            last_eta = time.time()
+
         # Without buffer feedback this only decides the chunk size
         bufsz = 1024
         bufsp = bufsz
@@ -260,21 +284,53 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
         notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Starting')
 
         prev_percent = 0
+        send_eta(0)
 
         while globals.printing == True:
 
             if globals.paused:
                 # Hold back the data (the plotter finishes what is in its buffer), but stay
                 # responsive to the stop button
+                if paused_since is None:
+                    paused_since = time.time()
                 time.sleep(0.1)
+                continue
+            if paused_since is not None:
+                paused_time += time.time() - paused_since
+                paused_since = None
+
+            if pen_stops and total_bytes_written >= pen_stops[0][0]:
+                _, pen = pen_stops.popleft()
+                if use_buffer:
+                    # Let the plotter draw what is in its buffer before asking for the pen change
+                    while globals.printing:
+                        bufsp = plotter_cmd(tty, b'.B', True)
+                        if bufsp == bufsz:
+                            break
+                        time.sleep(0.5)
+                        socketio.emit('buffer_space', {'data': str(bufsp)})
+                    if not globals.printing:
+                        break
+                tty.write(b'PU;')
+                globals.wait_reason = 'pen_change'
+                globals.wait_pen = pen
+                globals.paused = True
+                socketio.emit('status_log', {'data': 'Pen change: wait for the plotter to stop, load pen {}, '
+                                                     'then press Resume.'.format(pen)})
+                socketio.emit('pen_change', {'data': {'pen': pen}})
+                notification.telegram_sendNotification('{}: {}: Load pen {}'.format(
+                    notify_name, globals.current_file, pen))
                 continue
 
             if flowControl == 'HP-IB':
-                data = hpgl.read(1)
+                size = 1
             elif bufsz < 80:
-                data = hpgl.read(10)
+                size = 10
             else:
-                data = hpgl.read(30)
+                size = 30
+            if pen_stops:
+                size = min(size, pen_stops[0][0] - total_bytes_written)    # stop exactly at the pen change
+            data = hpgl.read(size)
             bufsz_read = len(data)
 
             if flowControl in ('CTS/RTS', 'HP-IB'):
@@ -322,8 +378,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
                 print('*** End of Print, exiting.')
                 minutes = math.ceil((time.time() - globals.start_stamp) / 60)
                 notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Finished' + ': ' + str(minutes) + ' Minutes Total')
+                globals.drawn_seconds = time.time() - globals.start_stamp - paused_time
                 globals.current_file = 'None'
                 globals.start_stamp = 0
+                send_eta(input_bytes)
                 socketio.emit('bytes_written', {'data': f'**EOP** - {total_bytes_written} bytes sent. Exiting.'})
                 socketio.emit('print_progress', {'data': 100})
                 socketio.emit('end_of_print', {'data': 'True'})
@@ -335,6 +393,9 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
                 socketio.emit('bytes_written', {'data': f'{percent:.0f}%, {total_bytes_written} bytes written.'})
                 socketio.emit('print_progress', {'data': percent})
                 prev_percent = percent
+                send_eta(total_bytes_written)
+            elif time.time() - last_eta >= ETA_EVERY:
+                send_eta(total_bytes_written)
 
         if not finished:
             # The plot was stopped from the UI

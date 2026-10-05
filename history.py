@@ -28,6 +28,18 @@ def _connect():
         conn.close()
 
 
+# Columns added after the first release: (name, type). A database made by an older version gets them
+# when the server starts.
+NEW_COLUMNS = (('estimate_s', 'REAL'), ('drawn_s', 'REAL'))
+
+
+def _add_missing_columns(conn):
+    have = {row['name'] for row in conn.execute('PRAGMA table_info(jobs)')}
+    for name, kind in NEW_COLUMNS:
+        if name not in have:
+            conn.execute('ALTER TABLE jobs ADD COLUMN {} {}'.format(name, kind))
+
+
 def init():
     """Create the table. A plot still marked running was cut short by a restart or power loss."""
     try:
@@ -43,6 +55,7 @@ def init():
                 status TEXT NOT NULL,
                 progress INTEGER DEFAULT 0,
                 error TEXT)''')
+            _add_missing_columns(conn)
             conn.execute("UPDATE jobs SET status = 'interrupted', finished_at = ?, "
                          "error = 'The web plotter stopped while this plot was running' "
                          "WHERE status = ?", (time.time(), RUNNING))
@@ -68,13 +81,25 @@ def start(file, port, baudrate, flow_control):
         return None
 
 
-def finish(job, status, progress=0, error=None):
+def set_estimate(job, seconds):
+    """Remember the uncorrected time estimate of a running plot."""
+    if job is None or not seconds:
+        return
+    try:
+        with _lock, _connect() as conn:
+            conn.execute('UPDATE jobs SET estimate_s = ? WHERE id = ?', (float(seconds), job))
+    except (sqlite3.Error, ValueError) as e:
+        print('Could not record the plot estimate:', repr(e))
+
+
+def finish(job, status, progress=0, error=None, drawn_s=None):
+    """`drawn_s` is the time spent drawing (without pauses), for the estimate's correction."""
     if job is None:
         return
     try:
         with _lock, _connect() as conn:
-            conn.execute('UPDATE jobs SET status = ?, finished_at = ?, progress = ?, error = ? WHERE id = ?',
-                         (status, time.time(), int(progress or 0), error, job))
+            conn.execute('UPDATE jobs SET status = ?, finished_at = ?, progress = ?, error = ?, drawn_s = ? '
+                         'WHERE id = ?', (status, time.time(), int(progress or 0), error, drawn_s, job))
     except (sqlite3.Error, ValueError) as e:
         print('Could not update the plot history:', repr(e))
 
@@ -88,6 +113,25 @@ def recent(limit=50):
     except sqlite3.Error as e:
         print('Plot history unavailable:', repr(e))
         return []
+
+
+def correction(limit=10):
+    """How much longer (or shorter) plots really take than the model estimates: the median of
+    drawn / estimated over the latest completed plots, kept within sensible bounds."""
+    try:
+        with _lock, _connect() as conn:
+            rows = conn.execute(
+                'SELECT estimate_s, drawn_s FROM jobs WHERE status = ? AND estimate_s > 0 AND drawn_s > 0 '
+                'ORDER BY id DESC LIMIT ?', ('completed', int(limit))).fetchall()
+    except sqlite3.Error as e:
+        print('Plot history unavailable:', repr(e))
+        return 1.0
+    ratios = sorted(row['drawn_s'] / row['estimate_s'] for row in rows)
+    if not ratios:
+        return 1.0
+    middle = len(ratios) // 2
+    median = ratios[middle] if len(ratios) % 2 else (ratios[middle - 1] + ratios[middle]) / 2
+    return min(max(median, 0.3), 5.0)
 
 
 def clear():

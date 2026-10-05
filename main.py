@@ -20,6 +20,7 @@ from flask_socketio import SocketIO, emit
 
 import globals
 import history
+import hpgl_analysis
 import notification
 import send2serial
 import tasmota
@@ -52,6 +53,8 @@ DEVICES = {'hp7475a', 'hp7440a', 'hp7550', 'dxy', 'sketchmate', 'dmp_161',
 FLOW_CONTROLS = {'CTS/RTS', 'HP-IB', 'XON/XOFF', 'Software', 'None'}
 OUTPUT_SIZES = {'a0', 'a1', 'a2', 'a3', 'a4'}
 ORIENTATIONS = {'portrait', 'landscape'}
+PENS_RE = re.compile(r'[0-9]{1,2}(,[0-9]{1,2}){0,15}')
+PEN_CHANGES = {'pause', 'auto'}
 PORT_RE = re.compile(r'^(/dev/[\w./-]+|COM\d+)$')
 SPEED_RE = re.compile(r'^(\d+(\.\d+)?)?$')
 HOST_RE = re.compile(r'^([A-Za-z0-9.-]+(:\d{1,5})?)?$')
@@ -70,6 +73,11 @@ plot_lock = threading.Lock()
 current_plot = None
 
 config_lock = threading.Lock()
+
+# Copies of plots with only some of the pens, kept just for the time they are plotted
+PLOT_CACHE = os.path.join('cache', 'plots')
+# Analysing a bigger file takes long enough on a Pi to be worth a line in the log
+SLOW_ANALYSIS_BYTES = 1024 * 1024
 
 for _section in ('telegram', 'tasmota', 'timelapse', 'plotter'):
     if not config.has_section(_section):
@@ -178,6 +186,8 @@ class PlotEvents:
     def emit(self, name, data=None, **kwargs):
         globals.record_event(name, data)
         socketio.emit(name, data, **kwargs)
+        if name == 'pen_change':
+            broadcast_plot_state()      # the sender paused the plot: tell every page
 
 
 def plot_state():
@@ -205,16 +215,51 @@ def wait_seconds(events, seconds, message, stoppable):
         time.sleep(0.25)
 
 
-def plot(file, port, baudrate, flowControl, poweroff, timelapse):
+def prepare_plot_file(events, file, analysis, pens):
+    """The file to send and its analysis: the original, or a copy with only the chosen pens.
+
+    Returns (path, analysis, temporary), `temporary` being a file to delete afterwards."""
+    if analysis is None:
+        if os.path.getsize(file) > SLOW_ANALYSIS_BYTES and not hpgl_analysis.cached(file):
+            events.emit('status_log', {'data': 'Analysing the file...'})
+        analysis = hpgl_analysis.analyze_cached(file)
+    if not pens:
+        return file, analysis, None
+    if analysis is None:
+        raise ValueError('This file is too large to pick pens from')
+    os.makedirs(PLOT_CACHE, exist_ok=True)
+    path = os.path.join(PLOT_CACHE, '{}-pens-{}.hpgl'.format(
+        os.path.splitext(os.path.basename(file))[0], '-'.join(str(pen) for pen in pens)))
+    hpgl_analysis.filter_pens(file, path, pens, analysis)
+    events.emit('status_log', {'data': 'Plotting pen{} {} only.'.format(
+        's' if len(pens) > 1 else '', ', '.join(str(pen) for pen in pens))})
+    return path, hpgl_analysis.analyze(path), path
+
+
+def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock."""
     global current_plot
     events = PlotEvents()
     job = history.start(os.path.basename(file), port, baudrate, flowControl)
     outcome, error = None, None
+    temporary = None
     try:
         # Lock editing while printing
         socketio.emit('lock_edit', {'data': 'on'})
         broadcast_plot_state()
+
+        # Work out how long the plot takes (and which pens it uses) before anything is switched
+        # on. A file that cannot be analysed still plots, just without a time left or pen change
+        # pauses.
+        send_path = file
+        try:
+            send_path, analysis, temporary = prepare_plot_file(events, file, analysis, pens)
+        except (OSError, ValueError) as e:
+            raise ValueError('Could not prepare the plot: ' + str(e))
+        if analysis is None and pen_change == 'pause':
+            events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
+        if analysis is not None:
+            history.set_estimate(job, analysis['seconds'])
 
         # Tasmota - switch the plotter on and give it time to start up
         if poweroff == 'on':
@@ -228,7 +273,9 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse):
             events.emit('status_log', {'data': '*** Plot stopped.'})
             outcome = 'stopped'
         else:
-            result = send2serial.sendToPlotter(events, str(file), str(port), int(baudrate), str(flowControl))
+            result = send2serial.sendToPlotter(events, str(send_path), str(port), int(baudrate), str(flowControl),
+                                               analysis=analysis, pen_pause=(pen_change == 'pause'),
+                                               correction=history.correction())
             if result is False:
                 outcome, error = 'failed', last_error()
             else:
@@ -254,9 +301,15 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse):
         if outcome is None:
             outcome, error = 'failed', repr(e)
     finally:
-        history.finish(job, outcome or 'failed', globals.plot_progress, error)
+        history.finish(job, outcome or 'failed', globals.plot_progress, error,
+                       drawn_s=globals.drawn_seconds if outcome == 'completed' else None)
+        if temporary:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
         globals.printing = False
-        globals.paused = False
+        globals.clear_wait()
         globals.current_file = 'None'
         current_plot = None
         plot_lock.release()
@@ -328,6 +381,23 @@ def update_ports():
         ports['content'].append(saved)
     return ports
 
+# What an HPGL file draws: size, pens, time estimate
+@app.route('/analyze', methods=['GET'])
+def analyze_file():
+    name = request.args.get('file')
+    path = upload_file_path(name)
+    if not path or not path.lower().endswith('.hpgl') or not os.path.isfile(path):
+        return 'Please select a valid .hpgl file', 400
+    # While plotting only answer from the cache: a new analysis would compete with the serial loop
+    if plot_lock.locked() and not hpgl_analysis.cached(path):
+        return jsonify({'summary': None, 'busy': True})
+    try:
+        analysis = hpgl_analysis.analyze_cached(path)
+    except OSError as e:
+        return 'Could not read the file: ' + str(e), 500
+    return jsonify({'summary': hpgl_analysis.summary(analysis, history.correction()), 'busy': False})
+
+
 # Recent plots, newest first
 @app.route('/job_history', methods=['GET'])
 def job_history():
@@ -389,17 +459,39 @@ def start_plot():
     poweroff = request.form.get('tasmota')
     timelapse = request.form.get('timelapse')
 
+    pen_change = request.form.get('pen_change') or config_value('plotter', 'pen_change') or 'auto'
+    if pen_change not in PEN_CHANGES:
+        return 'Invalid pen change mode', 400
+    pens = None
+    analysis = None
+    pens_text = request.form.get('pens') or ''
+    if pens_text:
+        if not PENS_RE.fullmatch(pens_text):
+            return 'Invalid pens', 400
+        pens = sorted({int(pen) for pen in pens_text.split(',')})
+        # Picking pens needs the file's pens: the analysis is cached after the preview
+        analysis = hpgl_analysis.analyze_cached(path)
+        if analysis is None:
+            return 'This file is too large to pick pens from', 400
+        used = {segment['pen'] for segment in analysis['segments']}
+        if not used.intersection(pens):
+            return 'The file does not draw with the selected pens', 400
+        if used.issubset(pens):
+            pens = None     # every pen is wanted: plot the file as it is
+            analysis = None
+
     # Only one plot at a time
     if not plot_lock.acquire(blocking=False):
         return 'A plot is already running', 409
     current_plot = name
-    globals.paused = False
+    globals.clear_wait()
     globals.stop_requested = False
     globals.plot_finished = False
     globals.reset_plot_state()
 
     # Plots run for a long time, so don't block the request
-    socketio.start_background_task(plot, path, port, baudrate, flowControl, poweroff, timelapse)
+    socketio.start_background_task(plot, path, port, baudrate, flowControl, poweroff, timelapse,
+                                   pens, pen_change, analysis)
 
     return 'Plot started'
 
@@ -413,7 +505,7 @@ def stop_plot():
 
     globals.stop_requested = True
     globals.printing = False
-    globals.paused = False   # a paused plot must wake up to notice the stop
+    globals.clear_wait()     # a paused plot must wake up to notice the stop
     if globals.plot_finished:
         # Only waiting to switch the plotter off: the plot itself was not cancelled
         return 'Skipping the wait'
@@ -428,7 +520,10 @@ def set_paused(paused):
     if not plot_lock.locked():
         return 'No plot is running', 409
     if globals.paused != paused:
-        globals.paused = paused
+        if paused:
+            globals.paused = True
+        else:
+            globals.clear_wait()
         PlotEvents().emit('status_log', {'data': (
             'Plot paused. The plotter finishes what is already in its buffer.' if paused
             else 'Plot resumed.')})
@@ -554,6 +649,7 @@ CONFIG_FIELDS = {
     'plotter_device': ('plotter', 'device', lambda v: v in DEVICES),
     'plotter_baudrate': ('plotter', 'baudrate', valid_baudrate),
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
+    'plotter_pen_change': ('plotter', 'pen_change', lambda v: v in PEN_CHANGES),
     # Basic auth needs both; HTTP basic auth cannot have a ':' in the user name
     'auth_username': ('auth', 'username', lambda v: _is_text(v) and ':' not in v),
     'auth_password': ('auth', 'password', _is_text),

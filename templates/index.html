@@ -74,6 +74,7 @@
           <progress id="printProgress" class="uk-progress printProgress" value="0" max="100"></progress>
           <span class="uk-text-small uk-text-muted">Selected File: <span id="selectedFilename"
               class="uk-text-success selectedFilename"></span></span>
+          <div class="uk-text-small uk-text-muted etaText"></div>
         </div>
         <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
           <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
@@ -276,7 +277,25 @@
                         </select>
                       </div>
                     </div>
-                    <div>
+                    <div class="uk-width-1-1">
+                      <label class="uk-form-label" for="penChange">Pen changes</label>
+                      <div class="uk-margin-small">
+                        <select id="penChange" class="uk-select" name="pen_change">
+                          <option value="auto">Automatic (plotter with a pen carousel)</option>
+                          <option value="pause">Pause for a manual pen change</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <input id="plotPens" name="pens" type="hidden">
+                    <div id="fileInfo" class="uk-width-1-1 uk-hidden">
+                      <div class="uk-alert uk-alert-primary uk-margin-remove">
+                        <p id="fileInfoText" class="uk-margin-remove uk-text-small"></p>
+                        <div id="penChoices" class="uk-margin-small-top uk-hidden">
+                          <span class="uk-text-small uk-text-muted">Plot these pens:</span>
+                          <div id="penChoiceList" class="uk-grid-small uk-child-width-auto uk-grid uk-margin-remove-top"></div>
+                        </div>
+                      </div>
                     </div>
                   </fieldset>
                 </form>
@@ -389,6 +408,7 @@
           <progress id="printProgressOffCanvas" class="uk-progress printProgress" value="0" max="100"></progress>
           <span class="uk-text-small uk-text-muted">Selected File: <span id="selectedFilenameOffCanvas"
               class="uk-text-success selectedFilename"></span></span>
+          <div class="uk-text-small uk-text-muted etaText"></div>
         </div>
         <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
           <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
@@ -649,6 +669,16 @@
             </div>
 
             <div class="uk-width-1-1">
+              <label class="uk-form-label" for="plotter_pen_change">Pen changes (multi-pen files)</label>
+              <div class="uk-margin-small">
+                <select id="plotter_pen_change" class="uk-select" name="plotter_pen_change">
+                  <option value="auto">Automatic (plotter with a pen carousel)</option>
+                  <option value="pause">Pause for a manual pen change</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
               <h5 class="uk-margin-remove">Telegram notifications</h5>
             </div>
 
@@ -765,6 +795,20 @@
   </div>
   <!-- config modal -->
 
+  <!-- pen change modal: shown when the plot is held back for a manual pen change -->
+  <div id="modal-penChange" uk-modal="bg-close: false; esc-close: false">
+    <div class="uk-modal-dialog uk-modal-body">
+      <h2 class="uk-modal-title">Change pen</h2>
+      <p>Wait until the plotter has stopped moving, then load <strong>pen <span id="penChangeNumber"></span></strong> and
+        press Resume.</p>
+      <p class="uk-text-right">
+        <button class="uk-button uk-button-danger stopPlot" type="button">Stop plot</button>
+        <button class="uk-button uk-button-primary resumePlot" type="button">Resume</button>
+      </p>
+    </div>
+  </div>
+  <!-- pen change modal -->
+
   <!-- poweroff modal -->
   <div id="modal-poweroff" uk-modal>
     <div class="uk-modal-dialog uk-modal-body">
@@ -846,8 +890,19 @@
         console.log("END OF PRINT = " + (msg.data))
         if (String(msg.data).toLowerCase() == 'true') {
           jQuery('#chartContents').addClass('hidden');
+          setEta(null);
         }
       })
+
+      // Estimated time left
+      socket.on('eta', function (msg, cb) {
+        setEta(msg.data);
+      });
+
+      // The plot is held back until the pen has been changed
+      socket.on('pen_change', function (msg, cb) {
+        showPenChange(msg.data.pen);
+      });
 
       // get buffer space 
       socket.on('buffer_space', function (msg, cb) {
@@ -978,6 +1033,11 @@
         e.preventDefault();
         console.log()
         convertFile();
+      });
+
+      // Pens to plot
+      jQuery(document).on('change', '.penChoice', function () {
+        updatePenSelection();
       });
 
       // Clear Log

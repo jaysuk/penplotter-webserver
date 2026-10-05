@@ -24,7 +24,7 @@ def slow_plot(app, monkeypatch):
     """Replace the real plotting with one that runs until released, like a long plot."""
     state = {'release': False}
 
-    def fake_send(socketio, hpglfile, port, baud, flow):
+    def fake_send(socketio, hpglfile, port, baud, flow, **kwargs):
         app.globals.printing = True
         socketio.emit('status_log', {'data': 'Configured for ' + flow})
         socketio.emit('buffer_size', {'data': '1024'})
@@ -177,7 +177,7 @@ def test_plot_lifecycle(app, client, uploads, slow_plot):
 def test_failed_plot_releases_the_lock(app, client, uploads, monkeypatch):
     (uploads / 'a.hpgl').write_text('IN;')
 
-    def explode(*args):
+    def explode(*args, **kwargs):
         raise RuntimeError('boom')
 
     monkeypatch.setattr(app.send2serial, 'sendToPlotter', explode)
@@ -427,7 +427,7 @@ def test_running_and_stopped_plots_are_recorded(app, client, uploads, slow_plot)
 def test_failed_plot_keeps_the_reason(app, client, uploads, monkeypatch):
     (uploads / 'a.hpgl').write_text('IN;')
 
-    def refuse(socketio, *args):
+    def refuse(socketio, *args, **kwargs):
         socketio.emit('error', {'data': 'could not open port'})
         return False
 
@@ -440,7 +440,7 @@ def test_failed_plot_keeps_the_reason(app, client, uploads, monkeypatch):
 
 def test_crashed_plot_is_recorded_as_failed(app, client, uploads, monkeypatch):
     (uploads / 'a.hpgl').write_text('IN;')
-    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a: 1 / 0)
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a, **k: 1 / 0)
     client.post('/start_plot', data=PLOT)
     assert wait_for(lambda: not app.main.plot_lock.locked() and history_rows(client))
     job = history_rows(client)[0]
@@ -519,7 +519,7 @@ def test_stop_skips_the_wait_before_power_off(app, client, uploads, slow_plot, t
 
 def test_stop_during_start_up_wait_cancels_the_plot(app, client, uploads, monkeypatch, tasmota_calls):
     sent = []
-    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a: sent.append(a))
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a, **k: sent.append(a))
     client.post('/save_configfile', data={'tasmota_on_delay': '120'})
     (uploads / 'a.hpgl').write_text('IN;')
     client.post('/start_plot', data={**PLOT, 'tasmota': 'on'})
