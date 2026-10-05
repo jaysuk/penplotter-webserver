@@ -26,7 +26,7 @@ Python webservice to simplify working with pen plotters:
 - Created for Raspberry Pi.
 - Upload *.SVG and *.HPGL files.
 - Convert *.SVG into *.HPGL files using [vpype](https://github.com/abey79/vpype)
-- Telegram notification on print end
+- Notifications (start, finish, errors, pen or paper changes, progress) to Telegram, a webhook or MQTT
 - Power off your plotter on print end using a Tasmota-enabled Sonoff controller   
 
 
@@ -55,7 +55,7 @@ http://{{your Raspberry-Pi IP address}}:5000
 Optional:
 Configure options in *config.ini* using the web interface (settings icon, bottom of the sidebar). Everything in *config.ini* can be changed there:
 - Plotter name, default device, port, baud rate and flow control.
-- Telegram token and chat ID for notifications.
+- Telegram token and chat ID, a webhook URL and an MQTT broker for notifications, and which events to send.
 - Tasmota device IP, and how long to wait after switching the plotter on and before switching it off.
 - Timelapse settings (stored, but not used by this version yet).
 - A login (see Security).

@@ -77,6 +77,7 @@ def env(tmp_path_factory):
     import presets
 
     notification.telegram_sendNotification = lambda message: False
+    notification.SYNC = True        # deliver in the test's own thread
 
     yield types.SimpleNamespace(
         dir=work, main=main, send2serial=send2serial, tasmota=tasmota,

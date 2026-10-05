@@ -3,3 +3,4 @@ requests>=2.25
 Flask>=2.2
 Flask-SocketIO>=5.3
 vpype
+paho-mqtt>=1.6

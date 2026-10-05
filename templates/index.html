@@ -921,6 +921,101 @@
             </div>
 
             <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Which messages to send</h5>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">Messages go to Telegram, the webhook and MQTT below, whichever are set up.</p>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_start">A plot starts</label>
+              <div class="uk-margin-small">
+                <select id="notify_start" class="uk-select" name="notify_start">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_finish">A plot finishes or is stopped</label>
+              <div class="uk-margin-small">
+                <select id="notify_finish" class="uk-select" name="notify_finish">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_error">A plot fails or the connection is lost</label>
+              <div class="uk-margin-small">
+                <select id="notify_error" class="uk-select" name="notify_error">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_pen_change">The pen or the paper must be changed</label>
+              <div class="uk-margin-small">
+                <select id="notify_pen_change" class="uk-select" name="notify_pen_change">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_progress_every">Progress every (percent, 0 = never)</label>
+              <div class="uk-margin-small">
+                <input id="notify_progress_every" class="uk-input" name="notify_progress_every" type="number" inputmode="numeric" min="0" max="50" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Webhook and MQTT</h5>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">The webhook gets a JSON message by POST. MQTT publishes the same JSON to <em>topic</em>/<em>event</em> (start, finish, error, attention, progress). Leave a field empty to switch it off.</p>
+            </div>
+
+            <div class="uk-width-1-1">
+              <label class="uk-form-label" for="webhook_url">Webhook URL</label>
+              <div class="uk-margin-small">
+                <input id="webhook_url" class="uk-input" name="webhook_url" type="text" autocomplete="off">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="mqtt_host">MQTT broker</label>
+              <div class="uk-margin-small">
+                <input id="mqtt_host" class="uk-input" name="mqtt_host" type="text" autocomplete="off">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="mqtt_port">MQTT port</label>
+              <div class="uk-margin-small">
+                <input id="mqtt_port" class="uk-input" name="mqtt_port" type="text" inputmode="numeric" placeholder="1883">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="mqtt_topic">MQTT topic</label>
+              <div class="uk-margin-small">
+                <input id="mqtt_topic" class="uk-input" name="mqtt_topic" type="text" placeholder="webplotter">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="mqtt_username">MQTT user name</label>
+              <div class="uk-margin-small">
+                <input id="mqtt_username" class="uk-input" name="mqtt_username" type="text" autocomplete="off">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="mqtt_password">MQTT password</label>
+              <div class="uk-margin-small">
+                <input id="mqtt_password" class="uk-input" name="mqtt_password" type="password" autocomplete="new-password">
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <button class="uk-button uk-button-default uk-button-small testNotification" type="button">Send a test message</button>
+              <span class="uk-text-small uk-text-muted uk-margin-small-left">Uses the saved settings: save first.</span>
+            </div>
+
+            <div class="uk-width-1-1">
               <h5 class="uk-margin-remove">Tasmota power switch</h5>
             </div>
 
@@ -1523,6 +1618,11 @@
       UIkit.util.on('#modal-previewFile', 'hidden', function () {
         if (hpglViewer) hpglViewer.stopReplay();
         watchingPlot = false;
+      });
+
+      jQuery(document).on('click', '.testNotification', function (e) {
+        e.preventDefault();
+        testNotification();
       });
 
       // Preview tools

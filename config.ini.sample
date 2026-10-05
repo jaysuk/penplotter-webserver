@@ -9,6 +9,22 @@ tasmota_ip = 192.168.1.101
 tasmota_on_delay = 2
 tasmota_off_delay = 30
 
+# Which messages to send (to Telegram, the webhook and MQTT). All can be changed in the web page.
+[notifications]
+notify_start = true
+notify_finish = true
+notify_error = true
+notify_pen_change = true
+# A message every this many percent (0 = never)
+notify_progress_every = 0
+# Optional: a JSON POST for every message, and an MQTT broker (published to <topic>/<event>)
+webhook_url =
+mqtt_host =
+mqtt_port = 1883
+mqtt_topic = webplotter
+mqtt_username =
+mqtt_password =
+
 [timelapse]
 timelapse_enable = false
 timelapse_auto_start = true

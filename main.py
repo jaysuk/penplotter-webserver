@@ -99,7 +99,7 @@ HPGL_NAME_RE = re.compile(r'[A-Za-z0-9._-]+\.hpgl')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
-for _section in ('telegram', 'tasmota', 'timelapse', 'plotter'):
+for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications'):
     if not config.has_section(_section):
         config.add_section(_section)
 
@@ -318,8 +318,7 @@ def wait_for_paper_change(events):
     events.emit('status_log', {'data': 'Change the paper, then press Resume to plot the next file.'})
     broadcast_plot_state()
     plotter_name = config.get('plotter', 'name', fallback='Plotter')
-    socketio.start_background_task(notification.telegram_sendNotification,
-                                   '{}: {}: Change the paper'.format(plotter_name, current_plot))
+    notification.send('attention', '{}: {}: Change the paper'.format(plotter_name, current_plot), file=current_plot)
     while globals.paused and not globals.stop_requested:
         time.sleep(0.25)
     globals.clear_wait()
@@ -449,6 +448,10 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
                 os.remove(temporary)
             except OSError:
                 pass
+        if outcome == 'failed':
+            plotter_name = config.get('plotter', 'name', fallback='Plotter')
+            notification.send('error', '{}: {}: Failed: {}'.format(
+                plotter_name, os.path.basename(file), error or last_error() or 'see the log'), file=os.path.basename(file))
         globals.printing = False
         globals.clear_wait()
         globals.current_file = 'None'
@@ -870,9 +873,7 @@ def stop_plot():
         # Only waiting (to switch the plotter off, or for the paper): the plot itself was not cancelled
         return 'Skipping the wait'
     plotter_name = config.get('plotter', 'name', fallback='Plotter')
-    socketio.start_background_task(
-        notification.telegram_sendNotification,
-        '{}: {}: Cancelled'.format(plotter_name, current_plot))
+    notification.send('finish', '{}: {}: Cancelled'.format(plotter_name, current_plot), file=current_plot)
     globals.current_file = 'None'
     return 'Plot stopped'
 
@@ -1290,6 +1291,17 @@ CONFIG_FIELDS = {
     'timelapse_enable': ('timelapse', 'timelapse_enable', _is_bool),
     'timelapse_auto_start': ('timelapse', 'timelapse_auto_start', _is_bool),
     'timelapse_preview': ('timelapse', 'timelapse_preview', _is_bool),
+    'notify_start': ('notifications', 'notify_start', _is_bool),
+    'notify_finish': ('notifications', 'notify_finish', _is_bool),
+    'notify_error': ('notifications', 'notify_error', _is_bool),
+    'notify_pen_change': ('notifications', 'notify_pen_change', _is_bool),
+    'notify_progress_every': ('notifications', 'notify_progress_every', lambda v: re.fullmatch(r'[0-9]{1,2}', v) is not None and int(v) <= 50),
+    'webhook_url': ('notifications', 'webhook_url', lambda v: v == '' or (len(v) <= 500 and notification.URL_RE.fullmatch(v) is not None)),
+    'mqtt_host': ('notifications', 'mqtt_host', lambda v: v == '' or notification.HOST_RE.fullmatch(v) is not None),
+    'mqtt_port': ('notifications', 'mqtt_port', lambda v: v == '' or (re.fullmatch(r'[0-9]{1,5}', v) is not None and 0 < int(v) < 65536)),
+    'mqtt_topic': ('notifications', 'mqtt_topic', lambda v: v == '' or notification.TOPIC_RE.fullmatch(v) is not None),
+    'mqtt_username': ('notifications', 'mqtt_username', _is_text),
+    'mqtt_password': ('notifications', 'mqtt_password', _is_text),
     'plotter_name': ('plotter', 'name', _is_text),
     'plotter_port': ('plotter', 'port', lambda v: v == '' or PORT_RE.fullmatch(v) is not None),
     'plotter_device': ('plotter', 'device', lambda v: v in DEVICES),
@@ -1302,10 +1314,12 @@ CONFIG_FIELDS = {
 }
 
 # Shown when an older config.ini does not have the setting yet
-CONFIG_DEFAULTS = {'tasmota_on_delay': '2', 'tasmota_off_delay': '30'}
+CONFIG_DEFAULTS = {'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
+                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true',
+                   'notify_progress_every': '0', 'mqtt_port': '1883', 'mqtt_topic': 'webplotter'}
 
 # Never sent back to the browser: an empty password in a save means "keep the current one"
-WRITE_ONLY_FIELDS = {'auth_password'}
+WRITE_ONLY_FIELDS = {'auth_password', 'mqtt_password'}
 
 # Update configfile values
 @app.route('/save_configfile', methods=['GET', 'POST'])
@@ -1320,7 +1334,7 @@ def save_configfile():
                     value = value.strip()
                 if not is_valid(value):
                     return 'Invalid value for {}'.format(field), 400
-                if field == 'auth_password' and value == '':
+                if field in WRITE_ONLY_FIELDS and value == '':
                     continue
                 updates[(section, option)] = value
 
@@ -1359,7 +1373,18 @@ def save_configfile():
               for field, (section, option, _) in CONFIG_FIELDS.items()
               if field not in WRITE_ONLY_FIELDS}
     output['auth_password_set'] = bool(config_value('auth', 'password'))
+    output['mqtt_password_set'] = bool(config_value('notifications', 'mqtt_password'))
     return jsonify(output)
+
+# Send a test message to every notification channel that is set up
+@app.route('/action_test_notification', methods=['POST'])
+def action_test_notification():
+    if not notification.channels():
+        return 'No notification channel is set up (save a Telegram token and chat id, a webhook URL or an MQTT host first)', 400
+    results = notification.send_test()
+    text = ', '.join('{}: {}'.format(channel, 'sent' if reason is None else 'failed (' + reason + ')')
+                     for channel, reason in results.items())
+    return (text, 200) if all(reason is None for reason in results.values()) else (text, 502)
 
 # On connection
 @socketio.on('connect')

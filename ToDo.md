@@ -36,4 +36,5 @@ Open:
 - [x] Plot history: "Plot again" from a history row (a deleted file stays listed by name, without the button)
 - [x] Resume a stopped or failed plot from the history (carries on from the byte the plotter reached; untested on hardware)
 - [x] A dropped serial connection holds the plot and offers to reconnect and continue (untested on hardware)
+- [x] Notifications: per-event toggles, progress every N percent, webhook and MQTT, a test button
 - [ ] More plotter options?

@@ -1108,6 +1108,23 @@ function updateConfiguration() {
     });
 }
 
+// The notification settings that are plain fields in the config modal
+const NOTIFICATION_FIELDS = [
+  "notify_start", "notify_finish", "notify_error", "notify_pen_change", "notify_progress_every",
+  "webhook_url", "mqtt_host", "mqtt_port", "mqtt_topic", "mqtt_username",
+];
+
+function testNotification() {
+  axios
+    .post("/action_test_notification")
+    .then(function (response) {
+      notify(response.data, "success");
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
 // Fetch config.ini data and display modal
 function actionOpenConfig() {
   axios
@@ -1124,6 +1141,12 @@ function actionOpenConfig() {
         jQuery("#timelapse_enable").val(response.data.timelapse_enable);
         jQuery("#timelapse_auto_start").val(response.data.timelapse_auto_start);
         jQuery("#timelapse_preview").val(response.data.timelapse_preview);
+        for (const field of NOTIFICATION_FIELDS) {
+          jQuery("#" + field).val(response.data[field]);
+        }
+        jQuery("#mqtt_password")
+          .val("")
+          .attr("placeholder", response.data.mqtt_password_set ? "Leave empty to keep the current password" : "");
         jQuery("#auth_username").val(response.data.auth_username);
         // The password is never sent to the browser; leaving the field empty keeps it
         jQuery("#auth_password")

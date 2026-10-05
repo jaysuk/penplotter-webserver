@@ -253,7 +253,8 @@ def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_b
     from `offset` (the start of the command at `target`). Returns 'stopped' when Stop was pressed
     and 'failed' when the plotter could not be reached again."""
     socketio.emit('error', {'data': 'Lost the connection to the plotter: ' + str(reason)})
-    notification.telegram_sendNotification('{}: {}: Connection lost'.format(notify_name, globals.current_file))
+    notification.send('error', '{}: {}: Connection lost'.format(notify_name, globals.current_file),
+                      file=globals.current_file)
     try:
         tty.close()
     except PORT_ERRORS:
@@ -286,8 +287,8 @@ def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_b
     socketio.emit('status_log', {'data': 'The plotter is connected again. Check that the paper and the pen '
                                          'carriage have not moved, then press Resume to carry on.'})
     socketio.emit('wait_change', {'data': {'reason': 'reconnect'}})
-    notification.telegram_sendNotification('{}: {}: Connected again, press Resume'.format(
-        notify_name, globals.current_file))
+    notification.send('attention', '{}: {}: Connected again, press Resume'.format(
+        notify_name, globals.current_file), file=globals.current_file)
     while globals.printing and globals.paused:
         time.sleep(0.1)
     if not globals.printing:
@@ -374,8 +375,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         last_len = 0            # size of the chunk written last
         last_stop = 0           # offset of the last pen change that was passed
 
+        remaining = None
+
         def send_eta(offset):
-            nonlocal last_eta
+            nonlocal last_eta, remaining
             if total_estimate is None:
                 return
             remaining = max(total_estimate - hpgl_analysis.time_at(analysis, offset) * correction, 0)
@@ -395,7 +398,6 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
                 socketio.emit('error', {'data': '*** Error initializing the plotter!'})
                 socketio.emit('error', {'data': str(e)})
-                notification.telegram_sendNotification(notify_name + ': Error initializing the plotter')
                 return False
 
             print('Size of plotter buffer is ', bufsz, ' bytes.')
@@ -404,7 +406,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
         globals.current_file = hpglfile.replace('uploads/', '').replace('.hpgl', '')
         globals.start_stamp = time.time()
-        notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Starting')
+        notification.send('start', notify_name + ': ' + globals.current_file + ': Starting', file=globals.current_file)
 
         prev_percent = 0
         send_eta(0)
@@ -442,8 +444,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                     socketio.emit('status_log', {'data': 'Pen change: wait for the plotter to stop, load pen {}, '
                                                          'then press Resume.'.format(pen)})
                     socketio.emit('pen_change', {'data': {'pen': pen}})
-                    notification.telegram_sendNotification('{}: {}: Load pen {}'.format(
-                        notify_name, globals.current_file, pen))
+                    notification.send('attention', '{}: {}: Load pen {}'.format(
+                        notify_name, globals.current_file, pen), file=globals.current_file, pen=pen)
                     continue
 
                 if flowControl == 'HP-IB':
@@ -512,7 +514,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
                     print('*** End of Print, exiting.')
                     minutes = math.ceil((time.time() - globals.start_stamp) / 60)
-                    notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Finished' + ': ' + str(minutes) + ' Minutes Total')
+                    notification.send('finish', notify_name + ': ' + globals.current_file + ': Finished' + ': ' + str(minutes) + ' Minutes Total',
+                                  file=globals.current_file, minutes=minutes, progress=100)
                     globals.drawn_seconds = time.time() - globals.start_stamp - paused_time
                     globals.current_file = 'None'
                     globals.start_stamp = 0
@@ -527,8 +530,14 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                 if percent != prev_percent:
                     socketio.emit('bytes_written', {'data': f'{percent:.0f}%, {total_bytes_written} bytes written.'})
                     socketio.emit('print_progress', {'data': percent})
-                    prev_percent = percent
                     send_eta(total_bytes_written)
+                    every = notification.progress_every()
+                    if every and percent < 100 and percent // every > prev_percent // every:
+                        left = ', about {} min left'.format(math.ceil(remaining / 60)) if remaining is not None else ''
+                        notification.send('progress', '{}: {}: {}% done{}'.format(
+                            notify_name, globals.current_file, percent, left),
+                            file=globals.current_file, progress=percent, remaining=round(remaining) if remaining is not None else None)
+                    prev_percent = percent
                 elif time.time() - last_eta >= ETA_EVERY:
                     send_eta(total_bytes_written)
 
