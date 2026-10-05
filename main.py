@@ -54,6 +54,9 @@ DEVICES = {'hp7475a', 'hp7440a', 'hp7550', 'dxy', 'sketchmate', 'dmp_161',
 FLOW_CONTROLS = {'CTS/RTS', 'HP-IB', 'XON/XOFF', 'Software', 'None'}
 OUTPUT_SIZES = {'a0', 'a1', 'a2', 'a3', 'a4'}
 ORIENTATIONS = {'portrait', 'landscape'}
+ROTATIONS = {'0', '90', '180', '270'}
+MARGIN_RE = re.compile(r'[0-9]{1,2}(\.[0-9])?')
+MAX_MARGIN_MM = 50
 PENS_RE = re.compile(r'[0-9]{1,2}(,[0-9]{1,2}){0,15}')
 PEN_CHANGES = {'pause', 'auto'}
 PORT_RE = re.compile(r'^(/dev/[\w./-]+|COM\d+)$')
@@ -178,6 +181,49 @@ def check_vpype_command(command):
         if token.lstrip('-').lower() in BLOCKED_VPYPE_COMMANDS:
             return 'The vpype command "{}" is not allowed'.format(token)
     return None
+
+
+def conversion_options(form):
+    """Validated conversion options from a form: (options, None), or (None, error message)."""
+    outputsize = form.get('outputsize')
+    pageorientation = form.get('pageorientation')
+    device = form.get('device')
+    speed = form.get('speed') or ''
+    custom_comand = form.get('command_input') or ''
+    margin = form.get('margin') or '0'
+    rotate = form.get('rotate') or '0'
+
+    if outputsize not in OUTPUT_SIZES:
+        return None, 'Invalid output size'
+    if pageorientation not in ORIENTATIONS:
+        return None, 'Invalid page orientation'
+    if device not in DEVICES:
+        return None, 'Invalid plotter device'
+    if not SPEED_RE.fullmatch(speed):
+        return None, 'Invalid plot speed'
+    if not MARGIN_RE.fullmatch(margin) or float(margin) > MAX_MARGIN_MM:
+        return None, 'Invalid margin (0 to {} mm)'.format(MAX_MARGIN_MM)
+    if rotate not in ROTATIONS:
+        return None, 'Invalid rotation'
+    error = check_vpype_command(custom_comand)
+    if error:
+        return None, error
+    return {
+        'outputsize': outputsize, 'pageorientation': pageorientation, 'device': device, 'speed': speed,
+        'custom_comand': custom_comand, 'margin': float(margin), 'rotate': int(rotate),
+        'linemerge': bool(form.get('linemerge')), 'linesort': bool(form.get('linesort')),
+        'linesimplify': bool(form.get('linesimplify')), 'reloop': bool(form.get('reloop')),
+        'mirror_x': bool(form.get('mirror_x')), 'mirror_y': bool(form.get('mirror_y')),
+    }, None
+
+
+def run_conversion(file, options, output=None):
+    """Convert an svg with validated options. Returns the message for the UI."""
+    return convert_file(file, options['outputsize'], options['pageorientation'], options['device'],
+                        options['speed'], options['custom_comand'], options['linemerge'], options['linesort'],
+                        options['linesimplify'], options['reloop'], socketio,
+                        margin=options['margin'], rotate=options['rotate'],
+                        mirror_x=options['mirror_x'], mirror_y=options['mirror_y'], output=output)
 
 
 class PlotEvents:
@@ -627,30 +673,12 @@ def start_conversion():
     if not file or not file.lower().endswith('.svg') or not os.path.isfile(file):
         return 'Please select a valid .svg file', 400
 
-    outputsize = request.form.get('outputsize')
-    pageorientation = request.form.get('pageorientation')
-    device = request.form.get('device')
-    speed = request.form.get('speed') or ''
-    linemerge = request.form.get('linemerge')
-    linesort = request.form.get('linesort')
-    linesimplify = request.form.get('linesimplify')
-    reloop = request.form.get('reloop')
-    custom_comand = request.form.get('command_input')
-
-    if outputsize not in OUTPUT_SIZES:
-        return 'Invalid output size', 400
-    if pageorientation not in ORIENTATIONS:
-        return 'Invalid page orientation', 400
-    if device not in DEVICES:
-        return 'Invalid plotter device', 400
-    if not SPEED_RE.fullmatch(speed):
-        return 'Invalid plot speed', 400
-    error = check_vpype_command(custom_comand)
+    options, error = conversion_options(request.form)
     if error:
         return error, 400
 
     try:
-        output = convert_file(file, outputsize, pageorientation, device, speed, custom_comand, linemerge, linesort, linesimplify, reloop, socketio)
+        output = run_conversion(file, options)
     except (Exception, SystemExit) as e:
         traceback.print_exc()
         socketio.emit('error', {'data': 'Conversion failed: ' + repr(e)})

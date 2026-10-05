@@ -131,6 +131,31 @@ def test_custom_command_is_restricted(client, uploads, command):
     assert client.post('/start_conversion', data={**CONVERT, 'command_input': command}).status_code == 400
 
 
+def test_conversion_passes_page_options(app, client, uploads):
+    (uploads / 'a.svg').write_text('<svg/>')
+    r = client.post('/start_conversion', data={**CONVERT, 'margin': '12.5', 'rotate': '90',
+                                               'mirror_x': 'on', 'mirror_y': 'on'})
+    assert r.status_code == 200
+    _, kwargs = app.convert_stub.calls[0]
+    assert kwargs == {'margin': 12.5, 'rotate': 90, 'mirror_x': True, 'mirror_y': True, 'output': None}
+
+
+def test_conversion_page_options_default_to_off(app, client, uploads):
+    (uploads / 'a.svg').write_text('<svg/>')
+    client.post('/start_conversion', data={**CONVERT, 'margin': ''})
+    _, kwargs = app.convert_stub.calls[0]
+    assert kwargs == {'margin': 0.0, 'rotate': 0, 'mirror_x': False, 'mirror_y': False, 'output': None}
+
+
+@pytest.mark.parametrize('field,value', [
+    ('margin', '-1'), ('margin', '51'), ('margin', 'x'), ('margin', '1e1'), ('margin', '5\n'), ('margin', '1.25'),
+    ('margin', '١٢'), ('rotate', '45'), ('rotate', '-90'), ('rotate', '90.0'), ('rotate', 'x'),
+])
+def test_conversion_rejects_bad_page_options(client, uploads, field, value):
+    (uploads / 'a.svg').write_text('<svg/>')
+    assert client.post('/start_conversion', data={**CONVERT, field: value}).status_code == 400
+
+
 def test_custom_command_allowed(client, uploads):
     (uploads / 'a.svg').write_text('<svg/>')
     r = client.post('/start_conversion', data={**CONVERT, 'command_input': 'linesort linemerge --tolerance 0.2mm'})

@@ -613,6 +613,30 @@
                 </select>
               </div>
             </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="margin"> Margin (mm)</label>
+              <div class="uk-margin-small">
+                <input id="margin" class="uk-input" name="margin" type="text" inputmode="decimal" placeholder="0 (fill the paper)">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="rotate"> Rotate</label>
+              <div class="uk-margin-small">
+                <select id="rotate" class="uk-select" name="rotate">
+                  <option value="0">Not rotated</option>
+                  <option value="90">90&deg; clockwise</option>
+                  <option value="180">180&deg;</option>
+                  <option value="270">90&deg; counter-clockwise</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-1@s">
+              <div class="uk-grid-small uk-child-width-auto uk-grid">
+                <label><input id="mirror_x" class="uk-checkbox" type="checkbox" name="mirror_x"> Mirror left to right</label>
+                <label><input id="mirror_y" class="uk-checkbox" type="checkbox" name="mirror_y"> Mirror top to bottom</label>
+              </div>
+            </div>
           </fieldset>
 
           <div class="left-content-box uk-margin-top">
