@@ -129,6 +129,15 @@ def _row(row):
     return job
 
 
+def clear_resume(job):
+    """A plot that was carried on can not be resumed a second time."""
+    try:
+        with _lock, _connect() as conn:
+            conn.execute('UPDATE jobs SET resume_offset = NULL WHERE id = ?', (int(job),))
+    except (sqlite3.Error, ValueError, TypeError) as e:
+        print('Could not update the plot history:', repr(e))
+
+
 def recent(limit=50):
     """Newest first."""
     try:

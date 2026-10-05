@@ -390,6 +390,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
             tty.write(data)
             total_bytes_written += bufsz_read
+            # Where a stopped or failed plot can carry on: what the plotter has not drawn yet is
+            # in its buffer (known with buffer flow control) or was in this last chunk
+            globals.sent_offset = total_bytes_written
+            globals.buffer_used = (bufsz - bufsp) + bufsz_read if use_buffer else 0
 
             if bufsz_read == 0:
                 # Wait for the plotter to work through its buffer

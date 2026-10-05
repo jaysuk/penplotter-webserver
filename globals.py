@@ -24,6 +24,8 @@ plot_bytes = ''
 plot_buffer_size = None
 plot_eta = None          # {'remaining': seconds, 'total': seconds}, when the plot could be analysed
 drawn_seconds = None     # time spent sending the last plot, without pauses (for the ETA correction)
+sent_offset = 0          # bytes of the file written to the plotter so far
+buffer_used = 0          # of those, the bytes the plotter is known to still hold (buffer flow control only)
 
 
 def initialize():
@@ -45,7 +47,7 @@ def initialize():
 
 def reset_plot_state():
     """Forget the previous plot's log and progress (called when a new plot starts)."""
-    global plot_progress, plot_bytes, plot_buffer_size, plot_eta, drawn_seconds
+    global plot_progress, plot_bytes, plot_buffer_size, plot_eta, drawn_seconds, sent_offset, buffer_used
     with state_lock:
         plot_log.clear()
         plot_progress = 0
@@ -53,6 +55,8 @@ def reset_plot_state():
         plot_buffer_size = None
         plot_eta = None
         drawn_seconds = None
+        sent_offset = 0
+        buffer_used = 0
 
 
 def clear_wait():

@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shutil
 
 # vpype's HP plotter profiles use 0.02488 mm per plotter unit (about 40.2 units per mm)
 UNITS_PER_MM = 1 / 0.02488
@@ -321,6 +322,64 @@ def filter_pens(src, dst, pens, analysis):
             out.write(data)
             written += len(data)
     return written
+
+
+# Commands that set up the plotter (scaling, rotation, line type, character size, ...). They are
+# repeated at the start of a resumed plot, because an IN; undoes them.
+SETUP_COMMANDS = {'IP', 'IW', 'SC', 'RO', 'PS', 'LT', 'CA', 'CS', 'SS', 'DI', 'DR', 'SI', 'SR', 'SL',
+                  'DT', 'FT', 'PT', 'FS', 'AS', 'VN'}
+
+
+def resume_preamble(path, offset):
+    """What a plotter needs to carry on drawing a file from `offset`.
+
+    Returns (preamble, start): `start` is the beginning of the command at or just before `offset`
+    (the sender went back to it rather than risk a gap), and `preamble` is HPGL that puts the
+    plotter in the state the file has at `start`: initialised, set up, the pen selected and moved
+    there with the pen up (then down again if it was), and in the same absolute or relative mode.
+    At the very start of the file nothing is needed. Raises ValueError when nothing is left."""
+    state = State()
+    setup = []
+    start = None
+    with open(path, 'rb') as f:
+        for first, end, code, args in iter_commands(f):
+            if end > offset:
+                start = first
+                break
+            if code == 'IN':
+                setup = []
+            elif code in SETUP_COMMANDS:
+                setup.append(_render(code, args))
+            state.apply(code, args)
+    if start is None:
+        raise ValueError('There is nothing left to plot after that point')
+    if start == 0:
+        return b'', 0
+
+    out = b'IN;' + b''.join(setup)
+    if state.speed:
+        out += b'VS%g;' % state.speed
+    if state.pen > 0:
+        out += b'SP%d;' % state.pen         # never SP0: a hand-fitted pen holder would try to put the pen away
+    out += b'PU;PA%d,%d;' % (round(state.x), round(state.y))
+    if state.pen_down:
+        out += b'PD;'
+    if not state.absolute:
+        out += b'PR;'
+    return out, start
+
+
+def resume_file(src, dst, offset):
+    """Write the rest of `src` from `offset` to `dst`, with the preamble that sets the plotter up.
+
+    Returns (start, preamble_length): `dst` byte n (n >= preamble_length) is `src` byte
+    start + n - preamble_length."""
+    preamble, start = resume_preamble(src, offset)
+    with open(src, 'rb') as f, open(dst, 'wb') as out:
+        out.write(preamble)
+        f.seek(start)
+        shutil.copyfileobj(f, out)
+    return start, len(preamble)
 
 
 def _cache_path(path):

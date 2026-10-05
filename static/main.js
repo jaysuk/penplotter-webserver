@@ -820,10 +820,42 @@ function formatDuration(seconds) {
 
 // Buttons of a history row: the ids are numbers from the server, the labels are fixed text
 function historyActions(job) {
-  if (!job.can_replot || job.status == "running") return "";
+  if (job.status == "running") return "";
   const id = Number(job.id);
-  return `<a href="#" class="uk-button uk-button-default uk-button-small replotJob" data-job="${id}" ` +
-    `title="Plot this file again with the same settings">Plot again</a>`;
+  let buttons = "";
+  if (job.can_resume) {
+    // Buffer flow control knows what the plotter had not drawn yet, the others do not
+    const buffered = job.flow_control == "CTS/RTS" || job.flow_control == "Software";
+    buttons +=
+      `<a href="#" class="uk-button uk-button-default uk-button-small uk-margin-small-right resumeJob" data-job="${id}" ` +
+      `data-buffered="${buffered ? 1 : 0}" title="Carry on from where this plot got to">Resume</a>`;
+  }
+  if (job.can_replot) {
+    buttons +=
+      `<a href="#" class="uk-button uk-button-default uk-button-small replotJob" data-job="${id}" ` +
+      `title="Plot this file again with the same settings">Plot again</a>`;
+  }
+  return buttons;
+}
+
+// Resume a stopped plot: the pen carriage and paper must not have moved, and the plotter may
+// have a few commands in its buffer that never got drawn, so offer to go back a little
+function askResume(id, buffered) {
+  jQuery("#resumeJobId").val(id);
+  jQuery("#resumeRewind").val(buffered ? "0" : "1024");
+  UIkit.modal("#modal-resume").show();
+}
+
+function resumeJob() {
+  const id = jQuery("#resumeJobId").val();
+  const rewind = jQuery("#resumeRewind").val();
+  UIkit.modal("#modal-resume").hide();
+  axios
+    .post("/resume_job", new URLSearchParams({ job: id, rewind: rewind }))
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
 }
 
 function replotJob(id) {

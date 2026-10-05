@@ -1090,6 +1090,31 @@
   </div>
   <!-- wait modal -->
 
+  <!-- resume modal: carry on a stopped plot -->
+  <div id="modal-resume" uk-modal>
+    <div class="uk-modal-dialog uk-modal-body">
+      <h2 class="uk-modal-title">Resume this plot?</h2>
+      <p>The plot carries on from where it got to. Only continue if neither the paper nor the pen carriage has
+        moved since it stopped, and the same pen is loaded.</p>
+      <p class="uk-text-small">Plotters without buffer feedback may have had a little left to draw when the plot
+        stopped. Going back a little draws the last part again instead of leaving a gap.</p>
+      <input type="hidden" id="resumeJobId">
+      <label class="uk-form-label" for="resumeRewind">Go back</label>
+      <select id="resumeRewind" class="uk-select">
+        <option value="0">Not at all</option>
+        <option value="256">256 bytes</option>
+        <option value="1024">1 KB</option>
+        <option value="4096">4 KB</option>
+        <option value="16384">16 KB</option>
+      </select>
+      <p class="uk-text-right">
+        <button class="uk-button uk-button-default uk-modal-close" type="button">Cancel</button>
+        <button class="uk-button uk-button-primary confirmResume" type="button">Resume</button>
+      </p>
+    </div>
+  </div>
+  <!-- resume modal -->
+
   <!-- poweroff modal -->
   <div id="modal-poweroff" uk-modal>
     <div class="uk-modal-dialog uk-modal-body">
@@ -1459,6 +1484,16 @@
 
       jQuery(document).on('change', '.queuePauseAfter', function () {
         queueAction('pause_after', { id: jQuery(this).data('id'), value: this.checked ? '1' : '' });
+      });
+
+      jQuery(document).on('click', '.resumeJob', function (e) {
+        e.preventDefault();
+        askResume(jQuery(this).data('job'), jQuery(this).data('buffered') == 1);
+      });
+
+      jQuery(document).on('click', '.confirmResume', function (e) {
+        e.preventDefault();
+        resumeJob();
       });
 
       jQuery(document).on('click', '.replotJob', function (e) {

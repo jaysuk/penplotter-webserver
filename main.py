@@ -325,14 +325,31 @@ def wait_for_paper_change(events):
     globals.clear_wait()
 
 
+def resume_point(outcome, resume_start=0, resume_skip=0):
+    """Where a stopped or failed plot could carry on, as a byte offset in the file it was made from
+    (the original, or the copy with the chosen pens), or None.
+
+    The sender counts bytes of the file it sent. A resumed plot sent a different file (the set-up
+    commands, then the rest of the original from `resume_start`), so its count is mapped back."""
+    if outcome not in ('stopped', 'failed'):
+        return None
+    if globals.sent_offset == 0:
+        return None         # nothing was sent: there is nothing to carry on from
+    sent = max(globals.sent_offset - globals.buffer_used, 0)
+    if resume_start or resume_skip:
+        sent = resume_start + max(sent - resume_skip, 0)
+    return sent or None
+
+
 def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None,
-         options=None, power_on=True, keep_power=None, paper_change=False):
+         options=None, power_on=True, keep_power=None, paper_change=False, resume_from=None, resume_job=None):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock.
 
     The queue runs several plots in a row: `power_on` is false when the plotter was left switched
     on by the previous plot, `keep_power` is a function that tells whether another plot follows
     (then the plotter is not switched off) and `paper_change` waits for Resume before that next
-    plot. Returns how it ended: 'completed', 'stopped' or 'failed'."""
+    plot. `resume_from` carries on a stopped or failed plot from that byte of the file (or of the
+    copy with the chosen pens), `resume_job` being the history entry it continues. Returns how it ended: 'completed', 'stopped' or 'failed'."""
     global current_plot
     events = PlotEvents()
     try:
@@ -342,6 +359,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     job = history.start(os.path.basename(file), port, baudrate, flowControl, options, file_size)
     outcome, error = None, None
     temporary = None
+    resume_start, resume_skip = 0, 0
     try:
         # Lock editing while printing
         socketio.emit('lock_edit', {'data': 'on'})
@@ -355,6 +373,19 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             send_path, analysis, temporary = prepare_plot_file(events, file, analysis, pens)
         except (OSError, ValueError) as e:
             raise ValueError('Could not prepare the plot: ' + str(e))
+        if resume_from:
+            # Carry on from there: the rest of the file, after what sets the plotter up again
+            os.makedirs(PLOT_CACHE, exist_ok=True)
+            resume_path = os.path.join(PLOT_CACHE, os.path.splitext(os.path.basename(file))[0] + '-resume.hpgl')
+            try:
+                resume_start, resume_skip = hpgl_analysis.resume_file(send_path, resume_path, resume_from)
+            except (OSError, ValueError) as e:
+                raise ValueError('Could not resume: ' + str(e))
+            if temporary:
+                os.remove(temporary)        # the copy with the chosen pens: the resume file replaces it
+            send_path, temporary = resume_path, resume_path
+            analysis = hpgl_analysis.analyze(send_path)
+            events.emit('status_log', {'data': 'Resuming from byte {} of the file.'.format(resume_start)})
         if analysis is None and pen_change == 'pause':
             events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
         if analysis is not None:
@@ -408,7 +439,10 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             outcome, error = 'failed', repr(e)
     finally:
         history.finish(job, outcome or 'failed', globals.plot_progress, error,
-                       drawn_s=globals.drawn_seconds if outcome == 'completed' else None)
+                       drawn_s=globals.drawn_seconds if outcome == 'completed' else None,
+                       resume_offset=resume_point(outcome, resume_start, resume_skip))
+        if resume_job is not None and (outcome == 'completed' or globals.sent_offset > 0):
+            history.clear_resume(resume_job)       # carried on: the old plot is not resumable again
         if temporary:
             try:
                 os.remove(temporary)
@@ -642,6 +676,7 @@ def job_history():
     for job in jobs:
         path = upload_file_path(job['file'])
         job['can_replot'] = bool(path and os.path.isfile(path))
+        job['can_resume'] = can_resume(job)
         job.pop('options', None)
     return jsonify(jobs)
 
@@ -743,7 +778,7 @@ def claim_plot(name):
     return True
 
 
-def begin_plot(values):
+def begin_plot(values, resume_from=None, resume_job=None):
     """Start a plot in a background task (they run for a long time, so the request must not wait)."""
     if globals.queue_active:
         return 'The queue is running: Stop it first', 409
@@ -757,7 +792,7 @@ def begin_plot(values):
     socketio.start_background_task(plot, request_['path'], options['port'], options['baudrate'],
                                    options['flowControl'], options['tasmota'], options['timelapse'],
                                    request_['pens'], options['pen_change'], request_['analysis'],
-                                   options=options)
+                                   options=options, resume_from=resume_from, resume_job=resume_job)
     return 'Plot started'
 
 
@@ -785,6 +820,37 @@ def replot():
     if job is None:
         return 'No such plot', 404
     return begin_plot(job_values(job))
+
+
+MAX_REWIND = 1024 * 1024
+
+
+def can_resume(job):
+    """Can this plot carry on? It was stopped or failed part way, and the file is still the one
+    that was plotted."""
+    if job['status'] not in ('stopped', 'failed') or not job.get('resume_offset'):
+        return False
+    path = upload_file_path(job['file'])
+    try:
+        return bool(path) and os.path.getsize(path) == job.get('file_size')
+    except OSError:
+        return False
+
+
+# Carry on a stopped or failed plot from where it got to. `rewind` goes back further (in bytes), because
+# without buffer flow control nobody knows how much the plotter still had to draw.
+@app.route('/resume_job', methods=['POST'])
+def resume_job():
+    job = history.get(request.form.get('job'))
+    if job is None:
+        return 'No such plot', 404
+    if not can_resume(job):
+        return 'This plot cannot be resumed (it was not stopped part way, or the file has changed)', 400
+    rewind = request.form.get('rewind') or '0'
+    if not re.fullmatch('[0-9]{1,7}', rewind) or int(rewind) > MAX_REWIND:
+        return 'Invalid rewind', 400
+    offset = max(job['resume_offset'] - int(rewind), 0)
+    return begin_plot(job_values(job), resume_from=offset, resume_job=job['id'])
 
 # Stop the printing process
 @app.route('/stop_plot', methods=['POST'])
