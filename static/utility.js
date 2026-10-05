@@ -40,6 +40,7 @@ function renderFileListElement(name) {
                   </a>
                 </div>
                 <div class="uk-width-auto uk-text-right panel-icons">
+                  <a href="#" class="uk-icon-link previewFile" data-filename="${label}" title="Preview" data-uk-tooltip data-uk-icon="icon: image"></a>
                   <a href="#" class="uk-icon-link deleteFile lock-edit" data-filename="${label}" title="Delete" data-uk-tooltip data-uk-icon="icon: close"></a>
                 </div>
               </div>`;

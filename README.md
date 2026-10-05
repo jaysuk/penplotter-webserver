@@ -59,6 +59,16 @@ Configure options in *config.ini* using the web interface to set:
 - Telegram Chat ID for notifications.
 - Timelapse Settings
 
+## Development
+
+The Python sources are `main.py`, `send2serial.py`, `convert_vpype.py`, `config.py`, `notification.py`, `tasmota.py` and `globals.py`. Run it from a checkout with `python3 main.py` (needs the packages in *requirements.txt*).
+
+Flow control options (Settings -> Flow Control):
+- **CTS/RTS**, **Software**: the plotter reports its free buffer space and the buffer chart is shown.
+- **XON/XOFF**: handshaking is done by the serial driver. **None**: no handshaking. **HP-IB**: through Plug n Plot. No buffer information is available for these three.
+
+HPGL files in the file list have a preview (picture icon) that draws the pen movements, colored per pen.
+
 ## Security
 
 By default anyone who can reach port 5000 can upload and delete files, start plots and reboot the Pi.
@@ -73,7 +83,7 @@ password = change-me
 Restart the service afterwards (`sudo systemctl restart webplotter`) or edit the file before the first start.
 The login uses HTTP basic auth, so use it behind HTTPS if the network is not trusted.
 
-Custom vpype commands cannot use `eval`, `script`, `read`, `write`, `forfile`, `include`, `%expressions%` or file paths.
+Custom vpype commands are run by vpype, so they can only contain letters, numbers, spaces and `. _ = + -`, and cannot use `eval`, `script`, `read`, `write`, `forfile`, `include` or `show`.
 
 Set `WEBPLOTTER_DEBUG=1` to start Flask in debug mode (development only: it exposes an interactive debugger).
 

@@ -5,6 +5,7 @@
   <title>Plotter Webserver</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="{{url_for('static', filename='img/logo.png')}}">
 
   <!-- UIkit CSS -->
   <link rel="stylesheet" href="{{url_for('static', filename='vendor/uikit.min.css')}}" />
@@ -501,6 +502,28 @@
   </div>
   <!-- File Conversion Modal -->
 
+  <!-- File Preview Modal -->
+  <div id="modal-previewFile" uk-modal>
+    <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
+      <div class="uk-card-header mac-browser-bar">
+        <div class="uk-grid uk-grid-small">
+          <div class="uk-width-expand">
+            <h4>File Preview: <span id="previewFileName"></span></h4>
+          </div>
+          <div class="uk-width-auto uk-text-right panel-icons">
+            <a href="#" class="uk-icon-link mac-button mac-close uk-modal-close" title="Close" data-uk-tooltip
+              data-uk-icon="icon: close"></a>
+          </div>
+        </div>
+      </div>
+      <div class="uk-modal-body">
+        <canvas id="hpglCanvas" width="400" height="200"></canvas>
+        <p id="previewInfo" class="uk-text-small uk-text-muted uk-margin-small-top"></p>
+      </div>
+    </div>
+  </div>
+  <!-- File Preview Modal -->
+
   <!-- config modal -->
   <div id="modal-configFile" uk-modal>
     <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
@@ -652,6 +675,7 @@
 
   <script src="{{url_for('static', filename='main.js')}}"></script>
   <script src="{{url_for('static', filename='utility.js')}}"></script>
+  <script src="{{url_for('static', filename='hpgl_viewer.js')}}"></script>
   <script src="{{url_for('static', filename='smoothie_min.js')}}"></script>
   <script src="{{url_for('static', filename='buffer_chart.js')}}"></script>
 
@@ -772,6 +796,12 @@
       jQuery(document).on('click', '.deleteFile', function (e) {
         e.preventDefault();
         deleteFile(jQuery(this));
+      });
+
+      // Handle HPGL preview
+      jQuery(document).on('click', '.previewFile', function (e) {
+        e.preventDefault();
+        previewFile(jQuery(this));
       });
 
       // Handle list element conversion from SVG to HPGL

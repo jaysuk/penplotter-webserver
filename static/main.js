@@ -124,6 +124,62 @@ function deleteFile(element) {
     .then(function () {});
 }
 
+// Handle HPGL preview
+var hpglViewer = null;
+
+function previewFile(element) {
+  const filename = jQuery(element).attr("data-filename");
+
+  jQuery("#previewFileName").text(filename);
+  jQuery("#previewInfo").text("Loading...");
+
+  // The canvas is sized from its container, which only has a width once the modal is visible
+  UIkit.util.once("#modal-previewFile", "shown", function () {
+    loadPreview(filename);
+  });
+  UIkit.modal("#modal-previewFile").show();
+}
+
+// Preview files bigger than this would freeze a phone while parsing
+const PREVIEW_MAX_BYTES = 30 * 1024 * 1024;
+
+function loadPreview(filename) {
+  axios
+    .get("/uploads/" + encodeURIComponent(filename), {
+      responseType: "text",
+      transformResponse: [(data) => data], // keep the raw text, don't try to parse JSON
+      params: { _: Date.now() }, // always show the latest version of a re-converted file
+    })
+    .then(function (response) {
+      if (response.data.length > PREVIEW_MAX_BYTES) {
+        jQuery("#previewInfo").text("File is too large to preview");
+        return;
+      }
+
+      if (!hpglViewer) {
+        hpglViewer = new HPGLViewer(document.getElementById("hpglCanvas"));
+      }
+      const stats = hpglViewer.loadHPGL(response.data);
+
+      if (stats.paths == 0) {
+        jQuery("#previewInfo").text("Nothing to preview: the file contains no pen-down movements");
+        return;
+      }
+
+      let info =
+        stats.paths + " paths, " + stats.points + " points, approx. " +
+        stats.widthMm.toFixed(0) + " x " + stats.heightMm.toFixed(0) + " mm";
+      if (stats.unsupported.length > 0) {
+        info += " (ignored commands: " + stats.unsupported.join(", ") + ")";
+      }
+      jQuery("#previewInfo").text(info);
+    })
+    .catch(function (error) {
+      jQuery("#previewInfo").text("Preview failed: " + errorMessage(error));
+      console.error(error);
+    });
+}
+
 // Update page size options
 function updatePageSize(element) {
   // TODO add pagesize filter for the machines

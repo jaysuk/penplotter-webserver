@@ -2,7 +2,6 @@ import hmac
 import os
 import re
 import secrets
-import shlex
 import subprocess
 import threading
 import time
@@ -55,8 +54,11 @@ SPEED_RE = re.compile(r'^(\d+(\.\d+)?)?$')
 HOST_RE = re.compile(r'^([A-Za-z0-9.-]+(:\d{1,5})?)?$')
 CONTROL_CHARS_RE = re.compile(r'[\x00-\x1f\x7f]')
 
-# vpype commands that can execute code or touch arbitrary files
-BLOCKED_VPYPE_COMMANDS = {'eval', 'script', 'read', 'write', 'forfile', 'include'}
+# Custom vpype commands are run by vpype, so only allow plain words and numbers (no quotes,
+# %expressions%, paths or shell characters) and none of the commands that run code, touch
+# files or open a window.
+CUSTOM_COMMAND_RE = re.compile(r'^[A-Za-z0-9 ._=+-]*$')
+BLOCKED_VPYPE_COMMANDS = {'eval', 'script', 'read', 'write', 'forfile', 'include', 'show'}
 
 SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
 
@@ -148,17 +150,13 @@ def check_vpype_command(command):
     """Return an error message if a custom vpype command line is not allowed, else None."""
     if not command:
         return None
-    if len(command) > 500:
+    if len(command) > 200:
         return 'Custom vpype command is too long'
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return 'Custom vpype command could not be parsed'
-    for token in tokens:
-        if token.lower() in BLOCKED_VPYPE_COMMANDS:
+    if not CUSTOM_COMMAND_RE.match(command):
+        return 'Custom vpype commands may only contain letters, numbers, spaces and . _ = + -'
+    for token in command.split():
+        if token.lstrip('-').lower() in BLOCKED_VPYPE_COMMANDS:
             return 'The vpype command "{}" is not allowed'.format(token)
-        if '%' in token or '/' in token or '\\' in token:
-            return 'Expressions and file paths are not allowed in custom vpype commands'
     return None
 
 
@@ -363,8 +361,8 @@ def start_conversion():
         return error, 400
 
     try:
-        output = convert_file(file, outputsize, pageorientation, device, speed, custom_comand, linemerge, linesort, linesimplify, reloop)
-    except Exception as e:
+        output = convert_file(file, outputsize, pageorientation, device, speed, custom_comand, linemerge, linesort, linesimplify, reloop, socketio)
+    except (Exception, SystemExit) as e:
         traceback.print_exc()
         socketio.emit('error', {'data': 'Conversion failed: ' + repr(e)})
         return 'File not converted.'
