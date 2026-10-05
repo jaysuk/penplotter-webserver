@@ -152,7 +152,7 @@ def check_vpype_command(command):
         return None
     if len(command) > 200:
         return 'Custom vpype command is too long'
-    if not CUSTOM_COMMAND_RE.match(command):
+    if not CUSTOM_COMMAND_RE.fullmatch(command):
         return 'Custom vpype commands may only contain letters, numbers, spaces and . _ = + -'
     for token in command.split():
         if token.lstrip('-').lower() in BLOCKED_VPYPE_COMMANDS:
@@ -257,7 +257,7 @@ def update_ports():
 @app.route('/update_baud', methods=['POST'])
 def update_baud():
     port = request.form.get('selected_port', '')
-    if not PORT_RE.match(port):
+    if not PORT_RE.fullmatch(port):
         return 'Invalid port', 400
     if plot_lock.locked():
         return 'Cannot detect baudrate while plotting', 409
@@ -293,7 +293,7 @@ def start_plot():
         return 'Please select a valid .hpgl file', 400
 
     port = request.form.get('port', '')
-    if not PORT_RE.match(port):
+    if not PORT_RE.fullmatch(port):
         return 'Please select a valid COM port', 400
     baudrate = request.form.get('baudrate')
     if not valid_baudrate(baudrate):
@@ -354,7 +354,7 @@ def start_conversion():
         return 'Invalid page orientation', 400
     if device not in DEVICES:
         return 'Invalid plotter device', 400
-    if not SPEED_RE.match(speed):
+    if not SPEED_RE.fullmatch(speed):
         return 'Invalid plot speed', 400
     error = check_vpype_command(custom_comand)
     if error:
@@ -412,12 +412,12 @@ CONFIG_FIELDS = {
     'telegram_token': ('telegram', 'telegram_token', lambda v: re.fullmatch(r'[A-Za-z0-9:_-]*', v) is not None),
     'telegram_chatid': ('telegram', 'telegram_chatid', lambda v: re.fullmatch(r'[@\w-]*', v) is not None),
     'tasmota_enable': ('tasmota', 'tasmota_enable', _is_bool),
-    'tasmota_ip': ('tasmota', 'tasmota_ip', lambda v: HOST_RE.match(v) is not None),
+    'tasmota_ip': ('tasmota', 'tasmota_ip', lambda v: HOST_RE.fullmatch(v) is not None),
     'timelapse_enable': ('timelapse', 'timelapse_enable', _is_bool),
     'timelapse_auto_start': ('timelapse', 'timelapse_auto_start', _is_bool),
     'timelapse_preview': ('timelapse', 'timelapse_preview', _is_bool),
     'plotter_name': ('plotter', 'name', _is_text),
-    'plotter_port': ('plotter', 'port', lambda v: v == '' or PORT_RE.match(v) is not None),
+    'plotter_port': ('plotter', 'port', lambda v: v == '' or PORT_RE.fullmatch(v) is not None),
     'plotter_device': ('plotter', 'device', lambda v: v in DEVICES),
     'plotter_baudrate': ('plotter', 'baudrate', valid_baudrate),
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
