@@ -597,3 +597,12 @@ def test_saved_default_port_stays_selectable(client):
 def test_plot_accepts_a_by_id_port(app, client, uploads, slow_plot):
     (uploads / 'a.hpgl').write_text('IN;')
     assert client.post('/start_plot', data={**PLOT, 'port': BY_ID}).data == b'Plot started'
+
+
+def test_the_page_loads_the_theme(client):
+    page = client.get('/').get_data(as_text=True)
+    assert 'css/theme.css' in page and 'theme.js' in page and 'id="themeChoice"' in page
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert os.path.isfile(os.path.join(root, 'static', 'css', 'theme.css'))
+    assert os.path.isfile(os.path.join(root, 'static', 'theme.js'))

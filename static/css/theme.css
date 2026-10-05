@@ -1,0 +1,113 @@
+/* Dark theme, and small-screen touches. Hand written (main.css is compiled from sass/main.sass).
+   static/theme.js sets data-theme="dark" on <html>; without it nothing here changes the page.
+   The cards are dark already, so the dark theme darkens the page, the card title bars and the
+   plain dialogs. The preview canvas stays white: it is the paper. */
+
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] #content {
+  background-color: #1b1d1f;
+}
+
+:root[data-theme="dark"] #content {
+  background-image: none;
+}
+
+:root[data-theme="dark"] .mac-browser-bar {
+  background: #2a2d30;
+  color: #e6e6e6;
+}
+
+:root[data-theme="dark"] .mac-browser-bar h4 {
+  color: #e6e6e6;
+}
+
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) {
+  background: #26292c;
+  color: #d0d0d0;
+}
+
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) .uk-modal-title,
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) h1,
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) h2,
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) h3,
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) h4,
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) h5 {
+  color: #eee;
+}
+
+:root[data-theme="dark"] .uk-modal-dialog:not(.mac-card) .uk-button-default {
+  color: #ddd;
+  border-color: #777;
+}
+
+:root[data-theme="dark"] .uk-input,
+:root[data-theme="dark"] .uk-select,
+:root[data-theme="dark"] .uk-textarea {
+  background-color: #1f2224;
+  color: #e0e0e0;
+  border-color: #444;
+}
+
+:root[data-theme="dark"] .uk-input:focus,
+:root[data-theme="dark"] .uk-select:focus,
+:root[data-theme="dark"] .uk-textarea:focus {
+  background-color: #1f2224;
+  color: #fff;
+  border-color: #39f;
+}
+
+:root[data-theme="dark"] .uk-checkbox,
+:root[data-theme="dark"] .uk-radio {
+  background-color: #1f2224;
+  border-color: #666;
+}
+
+:root[data-theme="dark"] .uk-checkbox:checked,
+:root[data-theme="dark"] .uk-radio:checked {
+  background-color: #1e87f0;
+}
+
+:root[data-theme="dark"] hr {
+  border-top-color: #444;
+}
+
+:root[data-theme="dark"] .uk-notification-message {
+  background: #2a2d30;
+  color: #e0e0e0;
+}
+
+/* Phones and small tablets */
+@media (max-width: 959px) {
+  #content {
+    padding-top: 16px;
+  }
+
+  /* Easier to hit with a thumb */
+  .uk-button-small {
+    line-height: 34px;
+    min-height: 36px;
+  }
+
+  .uk-modal-dialog {
+    max-width: calc(100vw - 20px);
+  }
+
+  .uk-modal-body {
+    padding: 20px 16px;
+  }
+
+  /* Long file names wrap instead of pushing the buttons off the card */
+  #fileList a span,
+  #queueList span,
+  #historyList td {
+    overflow-wrap: anywhere;
+  }
+
+  #hpglCanvas {
+    max-width: 100%;
+  }
+
+  .jog-pad {
+    max-width: 100%;
+  }
+}

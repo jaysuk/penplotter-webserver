@@ -12,7 +12,7 @@ https://github.com/NEWTech-Creative/Roland-DXY-Plotter-WebUI (see "Viewer" below
 | 1 Estimate/ETA, jog panel, pens and pen-change pauses | Done (`de7ad21`, `1a6dea5`) |
 | 2 Margin/rotate/mirror, preview, presets, text, PDF | Done (`4fd3358` to `4954213`). G-code input dropped: vpype 1.15 has no reader. PDF was added through poppler rather than `vpype-pdf`. |
 | 3 Job control | Done: plot again, queue, resume, serial reconnect. Deviations: the queue module is `plot_queue.py` (`queue` is a stdlib module), and the queue is edited with up/down buttons rather than drag and drop. |
-| 4 Operations and polish | **Next**, now includes the viewer work |
+| 4 Operations and polish | Done: viewer, notifications, storage, backup, status API, theme. The dark theme and the small-screen CSS were written without a browser to look at; check them on a screen. |
 
 ## Phase 3: job control
 
