@@ -33,6 +33,7 @@ import presets
 import send2serial
 import tasmota
 import text_drawing
+import vpype_plugins
 from convert_vpype import convert_file, output_name, create_text as make_text_svg
 from config import config
 # import RPi.GPIO as GPIO
@@ -205,9 +206,13 @@ def check_vpype_command(command):
         return 'Custom vpype command is too long'
     if not CUSTOM_COMMAND_RE.fullmatch(command):
         return 'Custom vpype commands may only contain letters, numbers, spaces and . _ = + -'
+    file_commands = vpype_plugins.file_commands()
     for token in command.split():
-        if token.lstrip('-').lower() in BLOCKED_VPYPE_COMMANDS:
+        word = token.lstrip('-').lower()
+        if word in BLOCKED_VPYPE_COMMANDS:
             return 'The vpype command "{}" is not allowed'.format(token)
+        if word in file_commands:
+            return 'The plugin command "{}" reads or writes files, which is not allowed here'.format(token)
     return None
 
 
@@ -1180,6 +1185,12 @@ def queue_start():
     broadcast_queue()
     socketio.start_background_task(run_queue)
     return 'Queue started'
+
+
+# The vpype plugins that are installed, for the custom command box in the convert dialog
+@app.route('/vpype_plugins', methods=['GET'])
+def list_vpype_plugins():
+    return jsonify({'plugins': vpype_plugins.installed(), 'install': vpype_plugins.install_command()})
 
 
 # Saved sets of conversion options

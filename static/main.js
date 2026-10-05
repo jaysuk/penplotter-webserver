@@ -528,7 +528,69 @@ function convertFileModal(element) {
   const filename = jQuery(element).attr("data-filename");
   jQuery("#convertFile").val(filename);
   updatePresets();
+  updatePlugins();
   UIkit.modal("#modal-convertFile").show();
+}
+
+// vpype plugins: what is installed, and a click puts a command into the custom command box
+function pluginCommandHtml(command) {
+  const params = command.params.map(function (param) {
+    let text = escapeHtml(param.flags);
+    if (param.type && param.type !== "flag") text += " <em>" + escapeHtml(param.type) + "</em>";
+    if (param.default !== null && param.default !== "" && param.default !== false) {
+      text += " (default " + escapeHtml(param.default) + ")";
+    }
+    if (param.help) text += ": " + escapeHtml(param.help);
+    return "<li>" + text + "</li>";
+  });
+  const name = escapeHtml(command.name);
+  const button = command.file
+    ? '<span class="plugin-cmd is-disabled" title="Takes a file, so it cannot be used here">' + name + "</span>"
+    : '<a href="#" class="plugin-cmd" data-command="' + name + '" title="Add to the custom command">' + name + "</a>";
+  return (
+    '<div class="plugin-command">' + button +
+    (command.help ? " <span class=\"uk-text-muted\">" + escapeHtml(command.help) + "</span>" : "") +
+    (command.file ? ' <span class="uk-text-warning">takes a file: not available</span>' : "") +
+    (params.length ? '<ul class="plugin-params">' + params.join("") + "</ul>" : "") +
+    "</div>"
+  );
+}
+
+function showPlugins(data) {
+  const list = jQuery("#pluginList").empty();
+  jQuery("#pluginCount").text(data.plugins.length ? "(" + data.plugins.length + ")" : "(none installed)");
+  for (const plugin of data.plugins) {
+    const box = jQuery("<div/>", { class: "plugin" }).appendTo(list);
+    jQuery("<strong/>", { text: plugin.name + (plugin.version ? " " + plugin.version : "") }).appendTo(box);
+    if (plugin.error) jQuery("<div/>", { class: "uk-text-danger", text: plugin.error }).appendTo(box);
+    box.append(plugin.commands.map(pluginCommandHtml).join(""));
+  }
+  const hint = jQuery("<p/>", { class: "uk-text-muted uk-margin-small-top" }).appendTo(list);
+  hint.append(
+    document.createTextNode(
+      "Plugins are installed on the plotter's computer, then the server is restarted. In a terminal, run: "
+    )
+  );
+  jQuery("<code/>", { text: data.install + "vpype-<name>" }).appendTo(hint);
+  hint.append(document.createTextNode(". Commands that take a file cannot be used here."));
+}
+
+function updatePlugins() {
+  return axios
+    .get("/vpype_plugins")
+    .then(function (response) {
+      showPlugins(response.data);
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function addPluginCommand(name) {
+  const custom = jQuery("#use_custom_command");
+  if (!custom.prop("checked")) custom.prop("checked", true).trigger("change");
+  const input = jQuery("#command_input");
+  input.val((input.val().trim() + " " + name).trim()).trigger("focus");
 }
 
 // Make an svg from typed text

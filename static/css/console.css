@@ -518,3 +518,14 @@ body.console {
   .jog-pad { max-width: 100%; }
   .log { height: 160px; }
 }
+
+/* vpype plugins in the convert dialog */
+.plugin-box { margin-top: 8px; }
+.plugin-box > summary { cursor: pointer; color: var(--muted); font-family: var(--label); }
+.plugin-list { margin-top: 8px; max-height: 240px; overflow-y: auto; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.plugin + .plugin { margin-top: 10px; }
+.plugin-command { margin: 4px 0 0 8px; overflow-wrap: anywhere; }
+.plugin-cmd { font-family: var(--mono); color: var(--accent); }
+.plugin-cmd.is-disabled { color: var(--muted); text-decoration: line-through; }
+.plugin-params { margin: 2px 0 4px; padding-left: 18px; color: var(--muted); font-size: 0.9em; }
+.plugin-list code { font-family: var(--mono); overflow-wrap: anywhere; }

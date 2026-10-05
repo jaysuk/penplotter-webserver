@@ -646,6 +646,10 @@
                 <input id="command_input" class="uk-input" name="command_input" type="input"  placeholder="linesort linemerge ..." disabled>
               </div>
             </div>
+            <details id="pluginBox" class="plugin-box">
+              <summary>vpype plugins <span id="pluginCount" class="uk-text-muted"></span></summary>
+              <div id="pluginList" class="plugin-list uk-text-small"></div>
+            </details>
           </div>
           </div>
         </form>
@@ -1342,6 +1346,12 @@
       jQuery(document).on('click', '.createText', function (e) {
         e.preventDefault();
         createText();
+      });
+
+      // vpype plugin commands
+      jQuery(document).on('click', '.plugin-cmd[data-command]', function (e) {
+        e.preventDefault();
+        addPluginCommand(jQuery(this).attr('data-command'));
       });
 
       // Conversion presets
