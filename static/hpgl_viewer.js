@@ -22,6 +22,9 @@
   const MAX_CANVAS_HEIGHT_RATIO = 0.6;
   // vpype's HP plotter profiles use 0.02488 mm per plotter unit (the same as hpgl_analysis.py)
   const UNITS_PER_MM = 1 / 0.02488;
+  // A CalComp Model 84 moves in steps of 0.1 mm; a .cal file is drawn in HPGL units
+  const CAL_UNIT_MM = 0.1;
+  const CAL_SCALE = CAL_UNIT_MM * UNITS_PER_MM;
   // How far the view can zoom in beyond "fit", and out
   const MAX_ZOOM = 400;
   const MIN_ZOOM = 0.5;
@@ -230,6 +233,104 @@
     return { paths: paths, unsupported: [...unsupported], route: route };
   }
 
+  // Turn a CalComp .cal file into the same { paths, unsupported, route } as parseHPGL, in HPGL units so
+  // that everything else (millimetres, replay, fit) works unchanged. The commands are single letters
+  // ended by ; or a line end, with arguments split by commas or spaces:
+  //   C x,y  stores a pair (nothing moves)   K  moves to it, absolute     J  moves to it, relative
+  //   H  pen up    I  pen down    F n  pen select (F 10,n is the speed)    R n  reset: pen up
+  // Coordinates are steps of CAL_UNIT_MM. Origin, scale and window commands (T, N, W) and the point
+  // marks (M) are reported as unsupported, since a drawing that uses them would be placed wrongly.
+  function parseCAL(text) {
+    const paths = [];
+    const unsupported = new Set();
+    const route = { seg: [], meta: [], off: [], cum: [] };
+
+    let currentPath = null;
+    let pen = 1;
+    let penDown = false;
+    let currX = 0;
+    let currY = 0;
+    let pending = null;
+    let travelled = 0;
+
+    const moveTo = (x, y, offset) => {
+      if (x !== currX || y !== currY) {
+        travelled += Math.hypot(x - currX, y - currY);
+        route.seg.push(currX, currY, x, y);
+        route.meta.push(pen * 2 + (penDown ? 1 : 0));
+        route.off.push(offset);
+        route.cum.push(travelled);
+      }
+      if (penDown) {
+        if (!currentPath) {
+          // With the pen already down in the same place this is a dot (drawn with a round cap)
+          currentPath = { pen: pen, pts: [currX, currY] };
+          paths.push(currentPath);
+        }
+        if (x !== currX || y !== currY || currentPath.pts.length === 2) currentPath.pts.push(x, y);
+      } else {
+        currentPath = null;
+      }
+      currX = x;
+      currY = y;
+    };
+
+    const run = (text, offset) => {
+      const cmd = text.trim();
+      if (!cmd) return;
+      const code = cmd[0].toUpperCase();
+      const rest = cmd.slice(1).trim();
+      const args = rest ? rest.split(/[\s,]+/).map(Number) : [];
+      const numbers = args.length > 0 && args.every(Number.isFinite);
+
+      switch (code) {
+        case "C":
+          if (numbers && args.length >= 2) pending = [args[0] * CAL_SCALE, args[1] * CAL_SCALE];
+          break;
+        case "K":
+          if (pending) moveTo(pending[0], pending[1], offset);
+          break;
+        case "J":
+          if (pending) moveTo(currX + pending[0], currY + pending[1], offset);
+          break;
+        case "H":
+          penDown = false;
+          currentPath = null;
+          break;
+        case "I":
+          penDown = true;
+          currentPath = null;
+          break;
+        case "F":
+          // F 10,n sets the speed; F n picks pen n (F0 stores the pen)
+          if (numbers && args.length === 1) {
+            currentPath = null;
+            pen = args[0];
+          }
+          break;
+        case "R":
+          // Reset parameters: origin 0,0, scale 1, pen up
+          penDown = false;
+          currentPath = null;
+          break;
+        default:
+          unsupported.add(code);
+      }
+    };
+
+    // Commands end at ; or a line end
+    const commandEnd = /[^;\r\n]*[;\r\n]/g;
+    let last = 0;
+    let match;
+    while ((match = commandEnd.exec(text)) !== null) {
+      run(match[0].slice(0, -1), match.index);
+      last = commandEnd.lastIndex;
+    }
+    if (last < text.length) run(text.slice(last), last);
+
+    return { paths: paths, unsupported: [...unsupported], route: route };
+  }
+
   function getBounds(paths) {
     let minX = Infinity;
     let minY = Infinity;
@@ -332,10 +433,11 @@
       this.listen();
     }
 
-    // Parse and draw an HPGL file. Returns statistics about the drawing.
-    loadHPGL(text) {
+    // Parse and draw an HPGL file (or, with format "cal", a CalComp file). Returns statistics about
+    // the drawing.
+    loadHPGL(text, format) {
       this.stopReplay();
-      const parsed = parseHPGL(text);
+      const parsed = format === "cal" ? parseCAL(text) : parseHPGL(text);
       this.paths = parsed.paths;
       this.route = parsed.route;
       this.hiddenPens = new Set();
@@ -857,6 +959,8 @@
   }
 
   HPGLViewer.parse = parseHPGL;
+  HPGLViewer.parseCAL = parseCAL;
+  HPGLViewer.CAL_SCALE = CAL_SCALE;
   HPGLViewer.getBounds = getBounds;
   HPGLViewer.arcPoints = arcPoints;
   HPGLViewer.routeIndexAt = routeIndexAt;

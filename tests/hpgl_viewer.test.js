@@ -306,3 +306,87 @@ test('an empty file draws nothing and does not throw', () => withBrowser(() => {
   viewer.fit(); viewer.zoomBy(2); viewer.setCursor(0.5); viewer.startReplay(10);
   assert.ok(!viewer.isReplaying());
 }));
+
+// ---- CalComp .cal files -------------------------------------------------------------------
+// Coordinates are steps of 0.1 mm, drawn in HPGL units
+const calParse = (text) => HPGLViewer.parseCAL(text);
+const S = HPGLViewer.CAL_SCALE;
+
+test('C stores a pair and K moves to it; the pen state decides what is drawn', () => {
+  const { paths, route } = calParse('R2;H;F1;C100,200;K;I;C300,200;K;C300,400;K;H;');
+  assert.strictEqual(paths.length, 1);
+  assert.deepStrictEqual(paths[0].pts, [100 * S, 200 * S, 300 * S, 200 * S, 300 * S, 400 * S]);
+  assert.strictEqual(paths[0].pen, 1);
+  assert.strictEqual(route.meta.length, 3);                    // the move with the pen up, then two strokes
+  assert.deepStrictEqual(route.meta.map((m) => m & 1), [0, 1, 1]);
+});
+
+test('C alone moves nothing', () => {
+  const { paths, route } = calParse('R2;I;C100,100;C200,200;');
+  assert.strictEqual(paths.length, 0);
+  assert.strictEqual(route.meta.length, 0);
+});
+
+test('a step is 0.1 mm', () => {
+  const { paths } = calParse('H;C0,0;K;I;C2870,0;K;');
+  const mm = (paths[0].pts[2] - paths[0].pts[0]) / HPGLViewer.UNITS_PER_MM;
+  assert.ok(Math.abs(mm - 287) < 1e-9);
+});
+
+test('J moves relative to the pen, K is absolute', () => {
+  const { paths } = calParse('C100,100;K;I;C50,0;J;C0,25;J;C10,10;K;');
+  const expected = [100, 100, 150, 100, 150, 125, 10, 10].map((v) => v * S);
+  assert.strictEqual(paths[0].pts.length, expected.length);
+  paths[0].pts.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-9));
+});
+
+test('F n changes the pen and splits the path; F 10,n (the speed) does not', () => {
+  const { paths } = calParse('C0,0;K;I;F2;C10,0;K;F10,16;C20,0;K;F3;C30,0;K;');
+  assert.deepStrictEqual(paths.map((p) => p.pen), [2, 3]);
+  assert.deepStrictEqual(paths[0].pts, [0, 0, 10 * S, 0, 20 * S, 0]);      // the speed did not split it
+  assert.deepStrictEqual(paths[1].pts, [20 * S, 0, 30 * S, 0]);
+});
+
+test('a dot is a pen-down move that stays where it is', () => {
+  const { paths } = calParse('H;C500,500;K;I;C500,500;K;H;C600,500;K;I;C600,500;K;H;');
+  assert.strictEqual(paths.length, 2);
+  assert.deepStrictEqual(paths[0].pts, [500 * S, 500 * S, 500 * S, 500 * S]);
+  assert.deepStrictEqual(HPGLViewer.getBounds(paths), { minX: 500 * S, minY: 500 * S, maxX: 600 * S, maxY: 500 * S });
+});
+
+test('pen up moves are travel, and R2 lifts the pen', () => {
+  const { paths, route } = calParse('I;C10,0;K;R2;C20,0;K;');
+  assert.strictEqual(paths.length, 1);
+  assert.deepStrictEqual(route.meta.map((m) => m & 1), [1, 0]);
+});
+
+test('separators and terminators: spaces, commas, semicolons, line ends', () => {
+  const { paths } = calParse('H\r\nC100 200\r\nK\r\nI\r\nC300 200\r\nK\r\n');
+  assert.deepStrictEqual(paths[0].pts, [100 * S, 200 * S, 300 * S, 200 * S]);
+  assert.deepStrictEqual(calParse('C0,0;K;I;C1,1;K').paths[0].pts.length, 4);   // no final terminator
+});
+
+test('offsets say where each command starts in the text', () => {
+  const { route } = calParse('H;C1,1;K;I;C2,2;K;');
+  assert.deepStrictEqual(route.off, [7, 16]);                                        // the two K commands
+});
+
+test('commands that would place the drawing wrongly are reported, never guessed at', () => {
+  const { unsupported, paths } = calParse('R2;T 4,100,100;N 5,5;W 0,0,10,10;M 1;J;C0,0;K;I;C5,5;K;');
+  assert.deepStrictEqual(unsupported.sort(), ['M', 'N', 'T', 'W']);
+  assert.strictEqual(paths.length, 1);
+});
+
+test('malformed arguments are ignored, never NaN', () => {
+  assert.strictEqual(calParse('C1,x;K;I;C2;K;').paths.length, 0);
+  for (const path of calParse('C0,0;K;I;C5,5;K;F x;C9,9;K;').paths) assert.ok(path.pts.every(Number.isFinite));
+});
+
+test('the viewer loads a .cal file', () => withBrowser(() => {
+  const viewer = new HPGLViewer(fakeCanvas());
+  const stats = viewer.loadHPGL('R2;H;F2;C100,100;K;I;C2870,100;K;H;', 'cal');
+  assert.strictEqual(stats.paths, 1);
+  assert.ok(Math.abs(stats.widthMm - 277) < 1e-6);
+  assert.deepStrictEqual(viewer.penList().map((p) => p.pen), [2]);
+  assert.strictEqual(viewer.loadHPGL('R2;H;', 'cal').paths, 0);
+}));

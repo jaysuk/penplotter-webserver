@@ -304,18 +304,6 @@ function showPreview(title, url, conversion, watch, quiet) {
 // A file was selected in the list: show it, unless that would replace a conversion that is not saved yet
 function previewSelected(filename) {
   if (previewedConversion || !previewVisible()) return;
-  if (/\.cal$/i.test(filename)) {
-    // CalComp files are not HP-GL: there is nothing the viewer can draw
-    previewedFile = filename;
-    watchingPlot = false;
-    jQuery("#previewFileName").text(filename);
-    jQuery("#previewUnsaved, #previewActions").addClass("uk-hidden");
-    jQuery("#previewSummary").text("");
-    setPreviewDrawing(false);
-    jQuery("#previewInfo").text("No preview for .cal files");
-    updateWatchButton();
-    return;
-  }
   const watch = watchingPlot && filename === currentPlotFile;
   showPreview(filename, "/uploads/" + encodeURIComponent(filename), null, watch, true);
 }
@@ -396,7 +384,7 @@ function loadPreview(url) {
       }
       // The canvas takes its size from the stage, so the stage has to show it first
       setPreviewDrawing(true);
-      const stats = hpglViewer.loadHPGL(response.data);
+      const stats = hpglViewer.loadHPGL(response.data, /\.cal$/i.test(requested || "") ? "cal" : "hpgl");
       resetPreviewTools(stats);
 
       if (stats.paths == 0) {

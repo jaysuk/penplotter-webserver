@@ -54,7 +54,7 @@ function renderFileListElement(name, info) {
   const link = ext === 'hpgl' || ext === 'cal' ? 'selectFile' : 'no-selectFile';
   let actions = '';
 
-  if (ext === 'hpgl') {
+  if (ext === 'hpgl' || ext === 'cal') {
     actions += `<a href="#" class="uk-icon-link previewFile" data-filename="${label}" title="Preview" data-uk-tooltip data-uk-icon="icon: image"></a>`;
   } else if (ext === 'svg') {
     actions += `<a href="#" class="uk-icon-link convertFile lock-edit" data-filename="${label}" title="Convert to HPGL" data-uk-tooltip data-uk-icon="icon: bolt"></a>`;
