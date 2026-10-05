@@ -3,6 +3,7 @@ import hmac
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 import time
@@ -88,6 +89,10 @@ PLOT_CACHE = os.path.join('cache', 'plots')
 # Conversions that were previewed but not saved yet
 PREVIEW_DIR = os.path.join('cache', 'preview')
 PREVIEW_MAX_AGE = 24 * 3600
+# PDFs are turned into svgs with poppler's pdftocairo (an apt package, so only if it is installed)
+PDF_TOOL = 'pdftocairo'
+PDF_DIR = os.path.join('cache', 'pdf')
+PDF_TIMEOUT = 120
 HPGL_NAME_RE = re.compile(r'[A-Za-z0-9._-]+\.hpgl')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
@@ -401,10 +406,33 @@ def stop_button(channel):
 def too_large(e):
     return "File is too large", 413
 
+def pdf_import_available():
+    return shutil.which(PDF_TOOL) is not None
+
+
+def pdf_to_svg(pdf_path, svg_path):
+    """Turn the first page of a PDF into an svg. Returns None, or what went wrong."""
+    tool = shutil.which(PDF_TOOL)
+    if tool is None:
+        return 'PDF import needs poppler-utils (sudo apt install poppler-utils)'
+    try:
+        result = subprocess.run([tool, '-svg', '-f', '1', '-l', '1', pdf_path, svg_path],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                timeout=PDF_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return 'Reading the PDF took too long'
+    except OSError as e:
+        return 'Could not run ' + PDF_TOOL + ': ' + str(e)
+    if result.returncode != 0 or not os.path.isfile(svg_path) or os.path.getsize(svg_path) == 0:
+        print('pdftocairo failed:', result.stderr.decode('utf-8', 'replace')[:500])
+        return 'Could not read the PDF'
+    return None
+
+
 @app.route('/')
 def index():
     files = make_tree(app.config['UPLOAD_PATH'])
-    return render_template('index.html', files=files)
+    return render_template('index.html', files=files, pdf_import=pdf_import_available())
 
 
 # Upload
@@ -416,6 +444,8 @@ def upload_files():
     filename = secure_filename(uploaded_file.filename or '')
     base, ext = os.path.splitext(filename)
     ext = ext.lower()
+    if base and ext == '.pdf':
+        return import_pdf(uploaded_file, base)
     if not base or ext not in app.config['UPLOAD_EXTENSIONS']:
         return 'Only .svg and .hpgl files are accepted', 400
     filename = base + ext
@@ -423,6 +453,32 @@ def upload_files():
         return 'This file is currently being plotted', 409
     uploaded_file.save(os.path.join(app.config['UPLOAD_PATH'], filename))
     return '', 204
+
+def import_pdf(uploaded_file, base):
+    """Keep the first page of an uploaded PDF as uploads/<base>.svg. The PDF itself is not kept."""
+    if not pdf_import_available():
+        return 'PDF import needs poppler-utils (sudo apt install poppler-utils)', 400
+    if uploaded_file.stream.read(5) != b'%PDF-':
+        return 'That is not a PDF file', 400
+    uploaded_file.stream.seek(0)
+    os.makedirs(PDF_DIR, exist_ok=True)
+    pdf_path = os.path.join(PDF_DIR, base + '.pdf')
+    svg_path = os.path.join(PDF_DIR, base + '.svg')
+    try:
+        uploaded_file.save(pdf_path)
+        error = pdf_to_svg(pdf_path, svg_path)
+        if error:
+            return error, 400
+        os.replace(svg_path, os.path.join(app.config['UPLOAD_PATH'], base + '.svg'))
+    finally:
+        for path in (pdf_path, svg_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    socketio.emit('status_log', {'data': 'Imported page 1 of {}.pdf. Filled shapes are drawn as outlines.'.format(base)})
+    return '', 204
+
 
 @app.route('/uploads/<filename>')
 def upload(filename):

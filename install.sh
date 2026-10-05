@@ -290,6 +290,7 @@ if [ ! -d "$dir" ] ; then
             libgeos-dev \
             python3-venv \
             libssl-dev \
+            poppler-utils \
             hp2xx || die "Failed to install system packages. Exiting"
 
     step "Downloading Web Plotter ($BRANCH branch) from GitHub"
@@ -369,6 +370,11 @@ else
     sudo systemctl stop webplotter 2>/dev/null
     mv "$dir" "$old" && mv "$new" "$dir" || die "Could not replace $dir. Your old install is in $old"
     ok "New version in place"
+
+    # Added after the first release: PDF import needs it, nothing else does
+    if ! command -v pdftocairo >/dev/null 2>&1; then
+        run_spin "Installing poppler-utils (PDF import)" env DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C sudo apt-get install -qq -y -o DPkg::Lock::Timeout=300 poppler-utils || warn "Could not install poppler-utils, so PDF files cannot be imported"
+    fi
 
     step "Updating Python packages"
     source "$venv/bin/activate"
