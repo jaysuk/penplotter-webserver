@@ -1,175 +1,124 @@
 # Plan: what is left
 
-Written for the project owner. It covers items 11 to 20 of the outstanding list. The earlier plan
-(phases 0 to 4, all built) is in git history: `git show 7a38cfe:PLAN.md`.
+Written for the project owner. Everything built so far (queue, resume, reconnect, viewer, notifications,
+storage, backup, status API, theme) is described in `CLAUDE.md`; the finished plans are in git history
+(`git show 7a38cfe:PLAN.md` for phases 0 to 4, `git show 5259d4a:PLAN.md` for the Pi session results).
+`ToDo.md` is the short list; this file is the reasoning.
 
-Items 1 to 6 of that list need a plotter. Items 7 to 10 (the pages in a browser, PDF import) were done on
-a Pi on 2026-10-05: see "Pi session: results" at the end, which also changed items 16, 17a and 19 below.
-
-## Found while writing this plan: CI was red (fixed 2026-10-05)
-
-CI is green on `PiPlot` again (79a241c): the tests on Python 3.9, 3.11 and 3.13, the JavaScript tests, and the installer on Zero W, Zero 2 W and Zero 2 W 64-bit. Three separate causes:
-- **Python 3.9 test job:** `tests/test_backup.py` used `sqlite3.Connection.deserialize` (Python 3.11 and later). The app code was fine. Fixed in the test.
-- **Installer job, "Do not run this installer with sudo":** the workflow runs the installer through `sudo -E chroot`, which leaks `SUDO_USER` into the chroot. The check in `install.sh` (added in 2657c5c) read that as `sudo bash install.sh`, and the job had failed on every push since. Fixed by `unset SUDO_USER ...` in the workflow.
-- **Installer job, "Your home folder /home/runner does not belong to root":** the same `sudo -E` leaks `HOME=/home/runner`, which is not root's and does not exist in the chroot. This one was hidden behind the first. Fixed by `export HOME=/root` in the workflow.
-- **One flaky job** failed with apt exit code 100: the Raspbian mirror `mirror.pyratelan.org` could not be reached over IPv6. That is not ours, a re-run passed, and it is probably what the earlier "exit code 100" on 4954213 was. If it keeps happening, retry `apt-get install` in the workflow.
-
-`install.sh` itself was not changed: its two guards protect people who run `sudo bash install.sh`.
-
-## Order
-
-1. ~~Fix CI~~ (done, see above).
-2. Cheap and independent: 14 (Telegram token), 18c/18d (small UI gaps), 17b (file name length guard), 17c (schema version).
-3. Pi session (see the end), which unlocks 16 (real installer run), 17a (conversion load) and 19 (flaky tests on Linux).
-4. Decisions that need you: 11 (timelapse), 12 (MP4200 and page sizes), 13 (GPIO buttons), 15 (more options).
-5. Bigger features: 17a (conversion in its own process), 18a/18b (drag and drop queue, checkpointed resume).
+**State on 2026-10-05:** `PiPlot` is pushed and in sync with `origin`. CI is green (tests on Python 3.9,
+3.11 and 3.13; JavaScript tests; the installer on Zero W, Zero 2 W and Zero 2 W 64-bit). The Pi Zero 2 W
+runs the code, 535 tests pass there, and the real serial code has been exercised against a simulated
+plotter (`tests/pi_serial_check.py`, 25 of 25 checks). Nothing has run on a real plotter.
 
 Sizes: S under an hour, M a few hours, L a day or more.
 
+## Order
+
+1. **When a plotter is connected:** the checklist in section A. It decides whether several features work.
+2. **Needs a decision from you** (section B): timelapse, MP4200 and page sizes, the GPIO buttons, "more options".
+3. **Can be done now, no input needed** (section C): Telegram token, name length guard, schema version, small UI gaps, test hygiene, CI dependency check.
+4. **Later, only if wanted** (section D): conversion in its own process, resume after a power cut, drag and drop queue.
+
 ---
 
-## 11. Timelapse (decision needed)
+## A. Needs a real plotter
 
-**Now:** `[timelapse]` settings, three fields in the config modal and a `/timelapse/<file>` route exist,
-but nothing records. The modal already says "not used by this version yet".
+None of this can be proved without hardware. The simulator (`tests/sim_plotter.py`) answers the queries
+and drains a buffer, and has no CTS line and no pen, paper or mechanics. Run `tests/pi_serial_check.py`
+first as a smoke test, then the real thing; each line below says what to look for.
 
-**Recommendation: remove it for now (S).** Dead settings are worse than none, and it needs a camera
-you do not have yet. Delete the config fields, the modal block and the route; keep reading an old
-`[timelapse]` section harmlessly so old config files still load. Bring it back when a camera exists.
+| # | Check | What to look for | If it fails |
+|---|---|---|---|
+| A1 | **Stop** (`ESC.K` then `PU;`) in each flow control mode | The pen lifts and the plotter goes quiet within a second. Buffer modes (CTS/RTS, Software) abort the buffer; XON/XOFF, None and HP-IB do not send `ESC.K`, so the plotter keeps drawing what it holds: is that what you want? | Send `PU;` (and `ESC.K` where the plotter supports it) in the other modes too. |
+| A2 | **Pause and Resume** | The plotter finishes its buffer, then idles; Resume carries on with no gap or repeat. | Note how much it draws after Pause; consider lowering the chunk size while paused. |
+| A3 | **Pen change pause** with a hand-fitted holder | Pause happens at the pen boundary, the pen lifts (`PU;`), the dialog names the pen, and the plot continues in the new pen. Never `SP0`. | Check `SP` handling on that model. |
+| A4 | **Jog, pen up/down, pick pen, trace plot area, where is the pen?** | The distances match the step size (this depends on the HP-GL unit size: 40 or 40.2 units per mm), the trace draws the real bounds, and `OA;` answers. | Wrong distances mean the unit constant (`UNITS_PER_MM`) is wrong for that plotter: make it a device setting. |
+| A5 | **Resume accuracy** | Stop a plot half way, change nothing, Resume with rewind 0: is there a gap or an overdraw at the join? Try rewind 256 B and 1 KB without buffer feedback. | Tune the defaults in the resume dialog (0 with buffer feedback, 1 KB without). |
+| A6 | **Reconnect** | Pull the USB adapter mid-plot, replug: the plot holds, reconnects, and after Resume the join is clean. | Tune `REWIND_NO_FEEDBACK` (1024) and `REWIND_HPIB` (64). |
+| A7 | **Queue** | Two files with Tasmota on: the plotter is switched on once and off after the last, and a paper change pause holds between them. | See the Tasmota notes in `CLAUDE.md`. |
+| A8 | **Tasmota power off** | The delay (default 30 s) is long enough for the last strokes. There is no verified HP-GL query for "finished drawing". | Try `OA;` polling for position stability, or `ESC.B` returning the full buffer plus a quiet period. |
+| A9 | **CTS/RTS** | The hand-polled CTS (`getCTS`) works, since the simulator cannot test it. | Never enable pyserial's `rtscts` here (known bug); see `CLAUDE.md`. |
+| A10 | **Software flow control throughput** | The sender sleeps 0.1 s per 30 byte chunk once the plotter's buffer is more than half full, which caps it at about 300 B/s. A fast plotter could be held back. Compare the speed of a dense plot with another sender. | Shorter sleep or larger chunk when the buffer is nearly empty; measure first. |
+| A11 | **Resume after a power cut** | Whether the plotter keeps its origin across a power cycle decides how useful D2 would be. | Skip D2. |
+| A12 | **HP-IB (Plug n Plot)** | 1 byte at a time at 9600 baud works and is not impossibly slow. | Larger chunks if the adapter buffers. |
 
+## B. Needs a decision from you
+
+### B1. Timelapse (decision)
+**Now:** `[timelapse]` settings, three fields in the config modal and a `/timelapse/<file>` route exist, but nothing records. The modal says "not used by this version yet".
+**Recommendation: remove it for now (S).** Dead settings are worse than none, and it needs a camera you do not have. Delete the config fields, the modal block and the route; keep reading an old `[timelapse]` section harmlessly so old config files still load.
 **If you want it (L):**
-- Capture: a configurable snapshot source, either a URL (mjpg-streamer or a webcam server) or a command (`libcamera-still`, `fswebcam`). Nothing hard-coded to one camera.
-- When to capture: every N seconds, or every N% of progress, plus once at each pen lift of a pen change. Run it in a background task so a slow camera never delays the serial loop.
-- Store frames in `cache/timelapse/<job id>/`; assemble with `ffmpeg` after the plot (`apt install ffmpeg`, add to the installer, non-fatal like poppler); keep the mp4 in `uploads/` or a `timelapse/` folder; count it in `/storage`.
-- Tests: fake snapshot source, assert frame count and that a failing camera never stops a plot.
-
+- Capture from a configurable source: a snapshot URL (mjpg-streamer, a webcam server) or a command (`libcamera-still`, `fswebcam`). Nothing hard-coded to one camera.
+- When: every N seconds or every N% of progress, plus each pen change. In a background task, so a slow camera never delays the serial loop.
+- Frames in `cache/timelapse/<job id>/`, assembled with `ffmpeg` after the plot (add to the installer, non-fatal like poppler), the mp4 counted in `/storage`.
+- Tests: a fake snapshot source; a failing camera never stops a plot.
 **Needs from you:** keep or remove; if keep, which camera.
 
-## 12. Page-size filter and the MP4200 device (decision needed)
-
-**Now:** `updatePageSize` in `main.js` is an empty stub. The convert dialog has no MP4200 although
-the plot settings and config do, and vpype 1.15 has no `mp4200` profile, so picking it fails.
-
+### B2. Page-size filter and the MP4200 device (decision)
+**Now:** `updatePageSize` in `main.js` is an empty stub. The convert dialog has no MP4200 although the plot settings and config do, and vpype 1.15 has no `mp4200` profile, so choosing it fails.
 **Steps (M):**
-1. Check first (S): `pip index versions vpype` and the vpype changelog. A newer vpype may have an MP4200 profile; the project does not pin vpype (`requirements.txt`), so a Pi may already have a newer one than this machine.
-2. If there is no profile: ship our own. vpype reads a user config (`--config`); add `devices/mp4200.toml` (page size, units, origin) and pass it from `convert_vpype.py`. Values must come from the Graphtec MP4200 manual or a real file from your plotter, not guessed. **Needs from you:** the plotter's HP-GL unit size and bed size, or a sample HPGL it produced.
-3. Page-size filter: each device has a maximum paper size. Put the limits in one table next to `DEVICES` in `main.py`, send it with the page, and have `updatePageSize` hide sizes the device cannot take (e.g. A3 plotters offer A3 and below). Validate on the server too (`conversion_options`), since the page is only a convenience.
-4. Tests: every device in `DEVICES` can be converted (skipped if vpype is missing); an oversize page is refused with 400; the select options follow the device.
+1. Check first (S): whether a newer vpype has an MP4200 profile (`pip index versions vpype`, the changelog). The project does not pin vpype, so a fresh Pi may already have a newer one; the Pi here has 1.15.0.
+2. If not, ship our own profile: vpype reads a user config (`--config`), so add `devices/mp4200.toml` (page size, units, origin) and pass it from `convert_vpype.py`. The values must come from the MP4200 manual or a real HPGL file from your plotter, not guessed.
+3. Page-size filter: a table of maximum paper size per device next to `DEVICES` in `main.py`, sent with the page; `updatePageSize` hides sizes a device cannot take; `conversion_options` refuses them too.
+4. Tests: every device in `DEVICES` converts (skipped without vpype); an oversize page is 400; the select follows the device.
+**Without the manual:** do 1 and 3 only, and remove MP4200 from the convert dialog.
+**Needs from you:** the plotter's HP-GL unit size and bed size, or a sample HPGL it produced.
 
-**Without the manual:** do steps 1 and 3 only, and remove MP4200 from the convert dialog's list (it already cannot work there).
+### B3. Pi Plot shield buttons (decision, optional)
+**Now:** the GPIO code in `main.py` is commented out and only logs. The shield is https://github.com/ithinkido/PiPlot, pins 27 and 22 in the old code.
+**Plan (M):** `gpiozero` imported lazily (so a Pi without it, or Windows, is unaffected; add it to `requirements.txt`); `[gpio] enable = false`, `start_pin`, `stop_pin` in `CONFIG_FIELDS` and the modal. **Stop** = exactly `/stop_plot` (so the queue is held). **Start** = resume if the plot is paused for a pen change, paper change or reconnect, otherwise start the queue if it has files, otherwise nothing. 300 ms debounce; ignored while a restore runs. Both go through the same functions as the HTTP routes. Tests use gpiozero's mock pin factory.
+**Needs from you:** whether 27 and 22 are right for your shield revision, and which button does what. Verify on the Pi if the shield is attached.
 
-## 13. Pi Plot shield buttons
+### B4. "More plotter options?" (decision)
+Too vague to plan. **Recommendation: delete the line** in `ToDo.md` unless you name something. Candidates: pen force (`FS`) and acceleration (`AS`) per plot; a speed override at plot time (`VS` inserted by the sender); copies (a queue shortcut); an origin offset at plot time. Each is S to M, and experimental until tried on a plotter.
 
-**Now:** `GPIO.add_event_detect(27/22, ...)` is commented out in `main.py`; the callbacks only log.
-The shield is https://github.com/ithinkido/PiPlot.
+## C. Can be done now
 
-**Plan (M), optional and off unless the hardware is there:**
-- Use `gpiozero` (pure Python, on Pi OS; on Bookworm/Trixie `RPi.GPIO` is not the supported route). Import it lazily, so a Pi without it (or a Windows dev machine) is unaffected; add it to `requirements.txt`.
-- Config `[gpio] enable = false`, `start_pin = 27`, `stop_pin = 22`, in `CONFIG_FIELDS` and the modal.
-- Button actions (confirm these with you): **Stop** = exactly `/stop_plot` (so the queue is held); **Start** = resume if paused for a pen/paper change or reconnect, otherwise start the queue if it has files, otherwise nothing. Debounce 300 ms; ignore presses while a conversion or restore runs. Both buttons go through the same functions as the HTTP routes, never a copy of their logic.
-- Tests: gpiozero's mock pin factory (`GPIOZERO_PIN_FACTORY=mock`) presses the buttons; assert the same state changes as the routes.
-- Verify on the Pi in the Pi session if the shield is attached; otherwise label "untested on hardware".
+### C1. Telegram token is returned to the browser (S)
+Same pattern as the MQTT and login passwords. Add `telegram_token` to `WRITE_ONLY_FIELDS`; `GET /save_configfile` returns `telegram_token_set`; the modal field becomes a password field with the placeholder "Leave empty to keep the current token" (the sample `XXXX...` value counts as not set); an explicit "Remove the token" checkbox, because empty already means keep. Tests: the GET and the page source never contain the token; empty keeps it; the checkbox clears it; a backup still restores it. Update `CLAUDE.md`; remove the `ToDo.md` line. Once done, rotate the token (BotFather `/revoke`) if the page was ever open to other people, because the old behaviour sent it to every browser that opened the dialog.
 
-**Needs from you:** are 27 and 22 right for your shield revision, and which button does what.
+### C2. File name length guard (S)
+Conversion options are encoded in the output file name (presets, previews and tests rely on that, so no sidecar file). The only real risk is a name over the filesystem limit (255 bytes). If the computed name is over 200 characters return 400 with a clear message, and test it with the longest allowed custom command. Revisit a sidecar only if that message is ever hit.
 
-## 14. Telegram token is returned to the browser
+### C3. Schema version (S)
+Replace "add the missing columns" in `history.py` with `PRAGMA user_version` and an ordered list of migrations (today's columns are migration 1; the queue and presets tables stay `CREATE IF NOT EXISTS`). A database from a newer version is refused with a clear message instead of being half used. `/restore` already calls the init functions, so it gets migrations for free: test restoring a version 0 database and a too-new one. Do this before the next schema change, not after.
 
-**Plan (S).** Same pattern as the MQTT and login passwords:
-- Add `telegram_token` to `WRITE_ONLY_FIELDS`; `GET /save_configfile` returns `telegram_token_set` instead.
-- Modal: password-type field, empty placeholder "Leave empty to keep the current token". The "XXXX..." placeholder value in a fresh `config.ini` counts as "not set".
-- A way to clear it: an explicit "Remove the token" checkbox, because empty already means keep.
-- Tests: GET never contains the token (also not in the page source); empty keeps; the checkbox clears; a backup still restores it. Update `CLAUDE.md` and remove the `ToDo.md` item.
-- Note: the token has been sent to every browser that opened the config dialog, so rotate it (BotFather `/revoke`) once this is done if the page was ever open to other people.
+### C4. Small UI gaps (S each)
+- **Pen selection from a preview of another file:** "Plot only the pens shown" only works if the previewed file is already selected. Make it select the file (`selectFile`), wait for `loadFileInfo`, then apply the ticks.
+- **Restore size:** the global 200 MB upload limit also caps a restore that includes uploads. First show the size of `uploads/` in the backup dialog ("about N MB"); if real uploads stay well under 200 MB, document it and stop; otherwise give `/restore` its own limit (a `Request` subclass whose `max_content_length` depends on the path).
+- **Confirm over the config dialog:** UIkit closes the config dialog when a confirm opens over it (restore). Acceptable; confirm inside the dialog if it bothers you.
+- **Convert while plotting:** warn in the convert dialog that converting slows a running plot a little (measured: longest gap between writes 715 ms against 200 ms), and refuse a second conversion while one runs.
 
-## 15. "More plotter options?"
+### C5. CI dependency checks (S)
+- Import `paho.mqtt.publish` in the installer workflow's smoke test as a non-fatal warning (the jobs prove it installs, not that it imports).
+- A step that compares `requirements.txt` with the app's third-party imports, so a missing dependency fails CI instead of a user's Pi.
+- If the Raspbian mirror outage (apt exit 100, seen once) recurs, retry `apt-get install` in the workflow.
 
-Too vague to plan. **Recommendation: delete the line** unless you name something. Candidates, if you want one:
-- Pen force (`FS`) and acceleration (`AS`) per plot, for plotters that support them (HP 7475A does `FS` on some models).
-- Speed override at plot time instead of only at conversion (`VS` inserted by the sender).
-- Copies: plot the same file N times (a queue shortcut, small once the queue exists).
-- Origin offset: move the drawing on the paper at plot time (`IP`/`SC`, or a `PA` offset in the preamble).
+### C6. Test hygiene (M)
+- Add `pytest-timeout` to `requirements-dev.txt` and `timeout = 60` to `pytest.ini`, so a hang is a failure with a stack dump, not a stuck CI run.
+- Run the suite 30 times on the Pi and on CI's Linux (3 of 30 done on the Pi: 535, 535, 534 passed; the one failure was a fixture race, fixed) to see whether anything else flakes.
+- Thread-based tests (`tests/test_reconnect.py`, `tests/test_queue.py`) should assert in teardown that their sender thread has ended, so a leaked thread fails the test that leaked it (a leaked thread caused a Windows `PermissionError` once).
+- Replace "wait for `plot_lock.locked()`" before `printing` is set with a `wait_until_plotting(app)` helper (that pattern hid the Stop race).
+- Add `node --test tests/theme.test.js` to the JavaScript job in `.github/workflows/tests.yml` (it only runs `hpgl_viewer.test.js`).
+- Decide whether the browser flows used on 2026-10-05 (Chrome driven by `puppeteer-core` through an SSH tunnel; they now live outside the repo) should go in `tests/ui/` with a README. They need Chrome and a running instance, so they would not run in CI.
 
-Each is S to M plus an experimental label until tried on a plotter.
+## D. Later, only if wanted
 
-## 16. Installer CI and the installer itself
+### D1. Conversion in its own process (M, low priority)
+`convert_file` runs vpype inside the request thread and holds the GIL. **Measured on the Pi Zero 2 W:** with six conversions running during a 15 KB plot the longest gap between writes was 715 ms (7 gaps over 300 ms) against 200 ms without, and the plot took 2.4 s longer. Real but small; it matters mostly for fast CTS/RTS plotters with a small buffer, and for how quickly Stop reacts. If wanted: run it in a child process at `nice 10` with a timeout and a kill on cancel, progress as `status_log` events plus a `conversion_done` event, one conversion at a time (a second gets 409), the in-process path kept for tests, the preview route using the same runner. C4's warning is the cheap first step.
 
-**Steps:**
-1. ~~Fix the CI failure.~~ Done: `unset SUDO_USER` and `export HOME=/root` in the workflow.
-2. ~~Fix my test.~~ Done.
-3. ~~Read the apt exit code 100.~~ A mirror outage, see above. (The installer jobs now also prove `poppler-utils` installs without failing the run.)
-4. Make sure the new dependency `paho-mqtt` installs on the 32-bit image (pure Python, so it should) and that `import paho.mqtt.publish` works there. Add that import to the workflow's smoke test as a non-fatal warning, like other optional pieces.
-5. Add a workflow step that checks `requirements.txt` against the imports in the app (every third-party import has a line), so a missing dependency fails CI instead of a user's Pi.
-6. ~~Real install on your Pi~~ **Done by you at 13:18 on 2026-10-05:** the update path ran on the Pi Zero 2 W (Trixie 64-bit, Python 3.13), `paho-mqtt` 2.1.0 installed from piwheels, `poppler-utils` was present, the service restarted on 7a38cfe and `uploads/`, `config.ini` and `history.db` were intact. So the installer works on real hardware; only the CI job is broken (steps 1 to 3).
+### D2. Resume after a restart or power cut (M, needs A11)
+An `interrupted` plot has no offset, so it cannot be resumed. Checkpoint the offset into the job row while plotting (at most every 30 s and every 256 KB, to spare the SD card), let `can_resume` accept `interrupted` rows with a stronger warning (after a power cut the plotter has lost its state and the paper may have moved), and default the rewind to the larger value. Worth doing only if A11 shows the plotter keeps its origin.
 
-**Needs from you:** nothing.
+### D3. Drag and drop queue (S/M)
+UIkit 3.7.2 has `uk-sortable`. Add `POST /queue/order` (`ids=3,1,2`) that must list exactly the waiting items (none running), reject anything else with 400, and renumber `position` in one transaction. Keep the up/down arrows as the touch fallback. Tests: reorder, wrong id set, running item, concurrent removal.
 
-## 17. Phase 0 leftovers
-
-### 17a. Conversion in its own process (M, low priority)
-**Why:** `convert_file` runs vpype inside the request thread. vpype is CPU-bound Python, so it holds the GIL.
-**Measured on a Pi Zero 2 W (2026-10-05):** a plot of 15 KB through a simulated plotter, with six vpype conversions running at the same time, had a longest gap between writes of 715 ms (7 gaps over 300 ms, p99 454 ms) against 200 ms (none over 300 ms) without them, and took 2.4 s longer (15.4 s against 12.8 s). That is real but small: a plotter with a 1 KB buffer should not run dry in 0.7 s. It matters mainly for fast plotters on CTS/RTS with a small buffer, and for how quickly Stop reacts.
-**Plan if you want it:** run the conversion in a child process (`subprocess` running a small entry point in `convert_vpype.py`) at low priority (`nice 10`), with a timeout and a kill on cancel. Progress and the result come back as `status_log` events and a `conversion_done` event; one conversion at a time (second request gets 409). Keep the in-process path for tests. The preview route uses the same runner. **Cheaper first step (S):** refuse a second conversion while one runs, and while a plot is running warn in the dialog ("converting slows the plot a little").
-
-### 17b. File name length (S)
-**Why not a sidecar file:** presets, previews and tests all rely on the name encoding the options, and a sidecar adds a second file to keep in step (delete, backup, restore). The real risk is only a name over the filesystem limit (255 bytes).
-**Plan:** compute the name, and if it is over 200 characters return 400 with a message ("too many options for the file name: shorten the file name or drop custom commands"). Test with the longest allowed custom command. Revisit the sidecar only if you ever hit that message.
-
-### 17c. Schema version (S)
-**Plan:** replace "add the missing columns" with `PRAGMA user_version` and an ordered list of migrations (the current columns are migration 1, the queue table and presets table stay `CREATE IF NOT EXISTS`). A database from a newer version than the code is refused with a clear message instead of being half used. Restore (`/restore`) already calls the init functions, so it gets migrations for free; add a test that restores a version-0 database and a version-too-new one. Do it before the next schema change, not after.
-
-## 18. Feature gaps
-
-### 18a. Queue drag and drop (S/M)
-UIkit 3.7.2 has `uk-sortable`. Add `POST /queue/order` (`ids=3,1,2`): must list exactly the waiting items, none running, rejects anything else with 400, and renumbers `position` in one transaction. Keep the up/down arrows as the touch fallback (sortable is awkward on phones). Tests: reorder, wrong id set, running item, concurrent removal.
-
-### 18b. Resume after a restart or power cut (M, needs hardware to prove)
-**Now:** an `interrupted` plot has no offset, so it cannot be resumed.
-**Plan:** checkpoint the offset into the job row while plotting, rate-limited (at most every 30 s and every 256 KB, to spare the SD card). `can_resume` then accepts `interrupted` rows, with a stronger warning in the dialog: after a power cut the plotter has lost its state and the paper may have moved. Default the rewind to the larger value because the buffer contents are unknown. **Real value needs a plotter:** whether an HP plotter keeps its origin across a power cycle decides how useful this is.
-
-### 18c. Pen selection from a preview of another file (S)
-Today "Plot only the pens shown" only works when the previewed file is already selected. Change it to: select that file (`selectFile`), wait for `loadFileInfo` to finish, then apply the ticks. Test in the viewer harness with a fake `selectFile`.
-
-### 18d. Restore size limit (S)
-The global 200 MB upload limit also caps a restore that includes uploads. First check whether it matters: add the total size of `uploads/` to the backup dialog ("this backup will be about N MB"). If real uploads stay well under 200 MB, document it and stop. If not, give `/restore` its own limit with a `Request` subclass whose `max_content_length` depends on the path.
-
-## 19. Flaky tests and test hygiene
-
-**What happened:** two intermittent failures, both on Windows. One was a real race (a Stop pressed just before the sender started was lost), now fixed. The other: a run that hung while two test loops ran at the same time, and a `PermissionError` when a sender thread from an earlier test still held `r.hpgl` open. These were not reproduced in 30 or so single runs.
-
-**Pi result (2026-10-05):** three runs of the suite on the Pi Zero 2 W (Linux, ARM, real vpype so no tests skipped): 535, 535 and 534 passed. The one failure was a race in the `slow_plot` fixture (it emitted `print_progress`, which tests wait for, before `bytes_written`); fixed by emitting them the other way round. So the slower machine exposed a flake that Windows did not, which is the point of step 1.
-
-**Plan (M):**
-1. Run the suite 30 times on the Pi and on CI's Linux (a `for` loop in a throwaway workflow) to see whether anything else flakes. (3 of 30 done on the Pi.)
-2. Add `pytest-timeout` to `requirements-dev.txt` and `timeout = 60` to `pytest.ini`, so a hang becomes a failure with a stack dump instead of a stuck CI run.
-3. Make the thread-based tests clean up properly: the `run` fixture in `tests/test_reconnect.py` and the fakes in `tests/test_queue.py` should assert the thread has ended in teardown (not just join with a timeout), so a leaked sender fails the test that leaked it.
-4. Audit tests that wait for `plot_lock.locked()` before `printing` is set (the pattern that exposed the Stop race). Replace with a helper `wait_until_plotting(app)`.
-5. Add `node --test tests/theme.test.js` to the JavaScript job in `.github/workflows/tests.yml` (it currently only runs `hpgl_viewer.test.js`).
-
-## 20. What to do with this file
-
-Keep `PLAN.md` while items are open; delete it when the list is empty. `ToDo.md` stays the short list; this file is the reasoning. `CLAUDE.md` is updated in the same commit as each feature, as before.
+### D4. Other things noticed
+- Replay was smooth on 15 to 46 KB files; nothing here was a multi-megabyte vpype file. Try one before relying on it for large plots.
+- `install.sh` is untouched by the CI fixes: its two guards (no `sudo bash install.sh`, `$HOME` must belong to the user) protect real users.
 
 ---
 
-## Pi session: results (2026-10-05, Pi Zero 2 W, Trixie 64-bit, Python 3.13)
+## Housekeeping
 
-Everything ran in a throwaway copy on port 5001 with its own config, history and uploads; the live instance was not touched and everything was removed afterwards.
-
-**Checked and working (previously unchecked):**
-- **Real serial port** (`tests/sim_plotter.py` + `tests/pi_serial_check.py`, a simulated plotter on a pseudo-terminal): a whole plot, the pen change pause with buffer feedback, stop then resume, a cable pulled and replugged (hold, 409 on resume while unplugged, reconnect, resume, the whole drawing arrives), and a queue of two. 25 of 25 checks. This also settled my worry about `.B` in the pen change wait: the source line holds a raw ESC byte, so it is correct.
-- **The pages in a browser** (Chrome driven by `puppeteer-core` through an SSH tunnel): desktop and phone, light and dark, no horizontal overflow, no console errors. Preview tools (legend, travel, zoom, drag, crosshair, replay, scrub), "Watch the plot" following a real plot, pen change dialog, a second page joining a running plot, stop and Resume dialog, "Plot again", the queue with a paper change pause, config dialog (notification fields, theme), backup download and restore through the page (including a non-zip), storage line, delete-old and clear cache.
-- **Real vpype conversion** of a two-layer svg: two pens in the legend and the A4 paper outline in the preview.
-- **PDF import with the real poppler:** Chrome-made PDF with text, a rectangle and a circle became an svg (25 paths, 42 glyph references) and converted to 55 paths, 0.92 m.
-
-**Bugs this found, all fixed (46878d3):**
-1. With Tasmota switched off, every plot still paused 2 s before sending and held the plot lock for 30 s afterwards (the ticked "shut down when finished" box is submitted from a hidden block). Next plot or queue start got 409 for 30 s.
-2. "Watch the plot" stayed hidden until some later event (`cursor_ok` was decided after the first state broadcast).
-3. Phone layout: jog controls, pen select and "Add to queue" were squeezed or wrapped.
-4. History rows: the buttons were clipped and the time wrapped.
-5. A test fixture race (see item 19) and a Python 3.9 test failure (see the top).
-
-**Still open from the session:**
-- UIkit closes the config dialog when a confirm dialog opens over it (restore). Acceptable; it could be avoided by confirming inside the dialog.
-- Software flow control sends at most about 300 B/s once the plotter's buffer is half full (`sleep(0.1)` per 30 byte chunk). That is the original behaviour, not new, but a fast plotter would be held back by it. Worth a look when you have a plotter: it may deserve a smaller sleep or a larger chunk.
-- The browser flows are not in the repo (they live in a scratch folder). If you want them kept, they could go in `tests/ui/` with a README; they need Chrome and an SSH tunnel, so they would not run in CI.
-- Item 9 (replay on a large real plot) was only tried on 15 to 46 KB files: it was smooth, but nothing here is a multi-megabyte vpype file.
+Keep `PLAN.md` while items are open and delete it when the list is empty. Update `CLAUDE.md` in the same commit as each feature, and tick the matching line in `ToDo.md`.
