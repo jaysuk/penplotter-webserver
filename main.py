@@ -983,6 +983,33 @@ def resume_plot():
     return set_paused(False)
 
 # ////////////////////////////////////////////////////////////////////////////
+# Read-only status for other programs (Home Assistant, a script). Behind the same login as the page.
+def api_state(plot):
+    """One word for what the plotter is doing."""
+    if plot['running']:
+        if plot['paused']:
+            return plot['wait_reason'] or 'paused'
+        return 'plotting'
+    return 'plotting' if plot['queue_active'] else 'idle'      # between two files of the queue
+
+
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    plot = plot_state()
+    queue = queue_state()
+    last = history.recent(1)
+    return jsonify({
+        'plotter': config_value('plotter', 'name') or 'Plotter',
+        'state': api_state(plot),
+        'plot': plot,
+        'queue': {'active': queue['active'], 'message': queue['message'],
+                  'waiting': sum(1 for item in queue['items'] if item['status'] == 'waiting'),
+                  'items': [item['file'] for item in queue['items']]},
+        'last_plot': {key: last[0][key] for key in ('id', 'file', 'status', 'started_at', 'finished_at', 'progress')} if last else None,
+    })
+
+
+# ////////////////////////////////////////////////////////////////////////////
 # The plot queue: several files in a row. Stop holds the queue (the plot that was running stays at
 # the top, waiting), it does not clear it.
 queue_lock = threading.Lock()
