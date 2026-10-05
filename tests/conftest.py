@@ -15,8 +15,8 @@ import pytest
 import fake_serial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py']
-APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'hpgl_analysis', 'plotter_control', 'presets', 'convert_vpype']
+SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py', 'text_drawing.py']
+APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'hpgl_analysis', 'plotter_control', 'presets', 'text_drawing', 'convert_vpype']
 
 
 @pytest.fixture(scope='session')
@@ -48,6 +48,17 @@ def env(tmp_path_factory):
     def output_name(file, *args, **kwargs):
         return os.path.splitext(file)[0] + '-converted.hpgl'
 
+    def create_text(*args, **kwargs):
+        stub.text_calls.append((args, kwargs))
+        if stub.text_error:
+            raise stub.text_error
+        with open(kwargs['output'], 'w') as f:
+            f.write('<svg/>')
+        return kwargs['output']
+
+    stub.text_calls = []
+    stub.text_error = None
+    stub.create_text = create_text
     stub.fail = False
     stub.hpgl = b'IN;SP1;PU400,800;PD2400,800,2400,2800;PU;SP2;PU0,0;PD400,400;PU;SP0;'
     stub.convert_file = convert_file
@@ -88,6 +99,8 @@ def app(env):
         entry.unlink()
     env.convert_stub.calls.clear()
     env.convert_stub.fail = False
+    env.convert_stub.text_calls.clear()
+    env.convert_stub.text_error = None
     env.serial.reset()
     env.globals.initialize()
     env.history.DB_PATH = 'history.db'

@@ -295,6 +295,21 @@ function convertFileModal(element) {
   UIkit.modal("#modal-convertFile").show();
 }
 
+// Make an svg from typed text
+function createText() {
+  axios
+    .post("/create_text", jQuery("#textData").serialize())
+    .then(function (response) {
+      notify(response.data, "success");
+      updateFiles();
+      UIkit.modal("#modal-createText").hide();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
+}
+
 // Conversion presets: named sets of the options in the convert dialog
 var presetOptions = {};
 

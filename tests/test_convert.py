@@ -147,3 +147,66 @@ def test_conversion_can_write_somewhere_else(convert, tmp_path):
     result, _, files = convert(output=str(target))
     assert result == 'Exported ' + str(target) and target.read_text().startswith('IN;')
     assert not any(f.endswith('.hpgl') for f in files)       # nothing next to the svg
+
+
+# ---- text as a drawing ------------------------------------------------------------------------
+
+@pytest.fixture
+def text_svg(convert, tmp_path):
+    """Make an svg of some text with the real vpype and return (page, bounds) in mm."""
+    from vpype_cli import execute
+    spec = importlib.util.spec_from_file_location('convert_vpype_text', os.path.join(ROOT, 'convert_vpype.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    mm = 25.4 / 96
+
+    def make(text, **options):
+        module.create_text(text, output='uploads/t.svg', **options)
+        doc = execute('read uploads/t.svg')
+        return tuple(round(float(v) * mm) for v in doc.page_size), tuple(round(float(v) * mm, 1) for v in doc.bounds())
+    return make, module
+
+
+def test_text_is_laid_out_inside_the_margins(text_svg):
+    make, _ = text_svg
+    page, (left, top, right, bottom) = make('Hello world', size_mm=20)
+    assert page == (210, 297) and (left, top) == (15.0, 15.0) and right < 195
+
+
+def test_text_alignment(text_svg):
+    make, _ = text_svg
+    _, (left, _, right, _) = make('Right', align='right', size_mm=15)
+    assert right == 195.0
+    _, (left, _, right, _) = make('Centre', align='center', size_mm=15)
+    assert (left + right) / 2 == pytest.approx(105, abs=0.2)
+
+
+def test_text_page_and_orientation(text_svg):
+    make, _ = text_svg
+    assert make('Wide', page='a3', landscape=True)[0] == (420, 297)
+    assert make('Tall', page='a3', landscape=False)[0] == (297, 420)
+
+
+def test_several_lines(text_svg):
+    make, _ = text_svg
+    _, one = make('One', size_mm=10)
+    _, three = make('One\nTwo\nThree', size_mm=10)
+    assert three[3] - three[1] > 2 * (one[3] - one[1])
+
+
+def test_text_that_is_too_wide_is_refused(text_svg):
+    make, module = text_svg
+    with pytest.raises(module.text_drawing.TextError):
+        make('x' * 60, size_mm=30)
+
+
+def test_awkward_text_reaches_vpype_unharmed(text_svg):
+    make, _ = text_svg
+    make('say "hi" $HOME `x` ; & | < > \\ \'q\' -minus', size_mm=8)
+
+
+def test_the_text_svg_converts_to_hpgl(text_svg, convert):
+    make, _ = text_svg
+    make('Plot me', size_mm=20)
+    result, _, files = convert('a4', 'portrait', file='uploads/t.svg')
+    assert result.startswith('Exported ') and any(f.endswith('.hpgl') for f in files)

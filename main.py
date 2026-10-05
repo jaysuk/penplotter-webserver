@@ -26,7 +26,8 @@ import plotter_control
 import presets
 import send2serial
 import tasmota
-from convert_vpype import convert_file, output_name
+import text_drawing
+from convert_vpype import convert_file, output_name, create_text as make_text_svg
 from config import config
 # import RPi.GPIO as GPIO
 
@@ -59,6 +60,8 @@ ORIENTATIONS = {'portrait', 'landscape'}
 ROTATIONS = {'0', '90', '180', '270'}
 MARGIN_RE = re.compile(r'[0-9]{1,2}(\.[0-9])?')
 MAX_MARGIN_MM = 50
+TEXT_SIZE_RE = re.compile(r'[0-9]{1,3}(\.[0-9])?')
+TEXT_SIZE_MM = (3, 200)
 PENS_RE = re.compile(r'[0-9]{1,2}(,[0-9]{1,2}){0,15}')
 PEN_CHANGES = {'pause', 'auto'}
 PORT_RE = re.compile(r'^(/dev/[\w./-]+|COM\d+)$')
@@ -813,6 +816,44 @@ def save_preview():
         return 'Could not save the file: ' + str(e), 500
     socketio.emit('status_log', {'data': 'File converted.'})
     return 'Exported ' + app.config['UPLOAD_PATH'] + '/' + name
+
+
+# Make a drawing of some typed text, to be converted like any svg
+@app.route('/create_text', methods=['POST'])
+def create_text_drawing():
+    form = request.form
+    try:
+        text = text_drawing.clean_text(form.get('text'))
+    except text_drawing.TextError as e:
+        return str(e), 400
+    font, align = form.get('font'), form.get('align')
+    page, orientation = form.get('outputsize'), form.get('pageorientation')
+    size, margin = form.get('size') or '', form.get('margin') or '15'
+    if font not in text_drawing.TEXT_FONTS:
+        return 'Invalid font', 400
+    if align not in text_drawing.TEXT_ALIGNMENTS:
+        return 'Invalid alignment', 400
+    if page not in OUTPUT_SIZES:
+        return 'Invalid page size', 400
+    if orientation not in ORIENTATIONS:
+        return 'Invalid page orientation', 400
+    if not TEXT_SIZE_RE.fullmatch(size) or not TEXT_SIZE_MM[0] <= float(size) <= TEXT_SIZE_MM[1]:
+        return 'Invalid text size ({} to {} mm)'.format(*TEXT_SIZE_MM), 400
+    if not MARGIN_RE.fullmatch(margin) or float(margin) > MAX_MARGIN_MM:
+        return 'Invalid margin (0 to {} mm)'.format(MAX_MARGIN_MM), 400
+
+    name = text_drawing.file_name(text)
+    path = upload_file_path(name)
+    if path is None:
+        return 'Invalid file name', 400
+    try:
+        make_text_svg(text, font, float(size), page, orientation == 'landscape', float(margin), align, output=path)
+    except text_drawing.TextError as e:
+        return str(e), 400
+    except (Exception, SystemExit) as e:
+        traceback.print_exc()
+        return 'Could not create the text: ' + str(e), 500
+    return 'Created ' + name
 
 
 def power_action(command):

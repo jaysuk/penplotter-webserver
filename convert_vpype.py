@@ -3,6 +3,8 @@ import re
 import vpype as vp
 from vpype_cli import execute
 
+import text_drawing
+
 # Scale and crop the svg to the selected paper size
 LANDSCAPE_LAYOUT = ' eval w,h=gprop.vp_page_size crop 0 0 %w% %h% rect -l1000 0 0 %w% %h% '
 PORTRAIT_LAYOUT = ' eval w,h=gprop.vp_page_size crop 0 0 %w% %h% rect -l1000 0 0 %w% %h% '
@@ -128,3 +130,13 @@ def convert_file(file, outputsize = 'a4', pageorientation = 'landscape', device 
 
     log('File converted.')
     return 'Exported ' + str(outputFile)
+
+
+def create_text(text, font='futural', size_mm=20, page='a4', landscape=False, margin_mm=15, align='left',
+                output=None):
+    """Write an svg of some text, in a Hershey font, laid out on a page. `text` must have been through
+    text_drawing.clean_text. Raises TextError when it does not fit between the margins."""
+    doc = execute(text_drawing.commands(text, font, size_mm, page, landscape, margin_mm, align))
+    text_drawing.check_fit(doc.bounds(), page, landscape, margin_mm)
+    execute('write "{}"'.format(os.path.join(os.getcwd(), str(output))), doc)
+    return output

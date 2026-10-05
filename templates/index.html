@@ -138,7 +138,8 @@
                   <h4>File Upload</h4>
                 </div>
                 <div class="uk-width-expand uk-text-right panel-icons">
-                  <!-- <a href="#" class="uk-icon-link" title="Configuration" data-uk-tooltip data-uk-icon="icon: cog"></a> -->
+                  <a href="#" class="uk-icon-link mac-button mac-mix createTextButton" title="Make a drawing from typed text"
+                    data-uk-tooltip data-uk-icon="icon: pencil"></a>
                   <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
                     data-uk-icon="icon: move"></a>
                   <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="uploadFiles-card"
@@ -948,6 +949,96 @@
   </div>
   <!-- config modal -->
 
+  <!-- text drawing modal -->
+  <div id="modal-createText" uk-modal>
+    <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
+      <div class="uk-card-header mac-browser-bar">
+        <div class="uk-grid uk-grid-small">
+          <div class="uk-width-expand">
+            <h4>Text Drawing</h4>
+          </div>
+          <div class="uk-width-auto uk-text-right panel-icons">
+            <a href="#" class="uk-icon-link mac-button mac-close uk-modal-close" title="Close" data-uk-tooltip
+              data-uk-icon="icon: close"></a>
+          </div>
+        </div>
+      </div>
+      <div class="uk-modal-body">
+        <form id="textData">
+          <fieldset class="uk-fieldset uk-grid-small" uk-grid>
+            <div class="uk-width-1-1">
+              <label class="uk-form-label" for="textInput">Text (one line per line, up to 15)</label>
+              <div class="uk-margin-small">
+                <textarea id="textInput" class="uk-textarea" name="text" rows="4" maxlength="300"></textarea>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="textFont">Font</label>
+              <div class="uk-margin-small">
+                <select id="textFont" class="uk-select" name="font">
+                  <option value="futural">Sans (single line)</option>
+                  <option value="futuram">Sans, heavier</option>
+                  <option value="rowmans">Roman</option>
+                  <option value="timesr">Serif</option>
+                  <option value="timesi">Serif italic</option>
+                  <option value="cursive">Cursive</option>
+                  <option value="scripts">Script</option>
+                  <option value="gothiceng">Gothic</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="textSize">Size (mm)</label>
+              <div class="uk-margin-small">
+                <input id="textSize" class="uk-input" name="size" type="text" inputmode="decimal" value="20">
+              </div>
+            </div>
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="textAlign">Align</label>
+              <div class="uk-margin-small">
+                <select id="textAlign" class="uk-select" name="align">
+                  <option value="left">Left</option>
+                  <option value="center">Centre</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="textPage">Page</label>
+              <div class="uk-margin-small">
+                <select id="textPage" class="uk-select" name="outputsize">
+                  <option value="a4">A4</option>
+                  <option value="a3">A3</option>
+                  <option value="a2">A2</option>
+                  <option value="a1">A1</option>
+                  <option value="a0">A0</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="textOrientation">Orientation</label>
+              <div class="uk-margin-small">
+                <select id="textOrientation" class="uk-select" name="pageorientation">
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="textMargin">Margin (mm)</label>
+              <div class="uk-margin-small">
+                <input id="textMargin" class="uk-input" name="margin" type="text" inputmode="decimal" value="15">
+              </div>
+            </div>
+          </fieldset>
+        </form>
+        <p class="uk-text-small uk-text-muted">Makes an SVG in the file list, to convert and plot like any other.</p>
+        <button class="uk-button uk-button-primary uk-width-1-1 createText" type="button">Create</button>
+      </div>
+    </div>
+  </div>
+  <!-- text drawing modal -->
+
   <!-- pen change modal: shown when the plot is held back for a manual pen change -->
   <div id="modal-penChange" uk-modal="bg-close: false; esc-close: false">
     <div class="uk-modal-dialog uk-modal-body">
@@ -1180,6 +1271,17 @@
           }
       });
 
+
+      // Text drawing
+      jQuery(document).on('click', '.createTextButton', function (e) {
+        e.preventDefault();
+        UIkit.modal('#modal-createText').show();
+      });
+
+      jQuery(document).on('click', '.createText', function (e) {
+        e.preventDefault();
+        createText();
+      });
 
       // Conversion presets
       jQuery(document).on('change', '#presetList', function () {
