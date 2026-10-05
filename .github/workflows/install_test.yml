@@ -51,6 +51,10 @@ jobs:
             export WEBPLOTTER_REPO="https://github.com/${{ github.repository }}.git"
             export WEBPLOTTER_BRANCH="${{ github.ref_name }}"
             export WEBPLOTTER_NO_REBOOT=1
+
+            # This runs through "sudo -E chroot", which leaves SUDO_USER set. install.sh refuses to run
+            # as "sudo bash install.sh", which is what that variable looks like, so clear it here
+            unset SUDO_USER SUDO_UID SUDO_GID SUDO_COMMAND
             chmod +x install.sh
             installer="$PWD/install.sh"
 
