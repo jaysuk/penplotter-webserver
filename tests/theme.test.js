@@ -13,8 +13,8 @@ test('the theme to show follows the choice, and the device only for "auto"', () 
   assert.strictEqual(theme.resolve('nonsense', true), 'light');
 });
 
-test('without storage the page is light and saving does not throw', () => {
-  assert.strictEqual(theme.stored(), 'light');
+test('without storage the page follows the device and saving does not throw', () => {
+  assert.strictEqual(theme.stored(), 'auto');
   assert.doesNotThrow(() => theme.save('dark'));
   assert.doesNotThrow(() => theme.save('nonsense'));
 });

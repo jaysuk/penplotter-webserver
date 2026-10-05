@@ -1,5 +1,5 @@
-// Light, dark or follow the device: the choice is kept in this browser (localStorage) and applied as
-// data-theme on <html>, which static/theme.css reads. Loaded in <head> so there is no flash.
+// Light, dark or follow the device (the default): the choice is kept in this browser (localStorage) and applied as
+// data-theme on <html>, which static/css/theme.css reads. Loaded in <head> so there is no flash.
 (function (global) {
   const KEY = "webplotter-theme";
   const CHOICES = ["light", "dark", "auto"];
@@ -14,9 +14,9 @@
   function stored() {
     try {
       const value = global.localStorage.getItem(KEY);
-      return CHOICES.indexOf(value) >= 0 ? value : "light";
+      return CHOICES.indexOf(value) >= 0 ? value : "auto";
     } catch (e) {
-      return "light";             // storage can be blocked (private windows)
+      return "auto";              // storage can be blocked (private windows)
     }
   }
 

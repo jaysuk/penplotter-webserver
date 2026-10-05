@@ -44,57 +44,30 @@ function formatAge(seconds) {
   return Math.floor(days / 365) + ' years';
 }
 
-// Nicer format for file list
+// One row of the file list: a type badge, the name and what is known about the file, and its actions.
+// The link with class selectFile covers the whole row (see console.css), so a click anywhere selects it.
 function renderFileListElement(name, info) {
-
-  // Get the file extension
-  const re = /(?:\.([^.]+))?$/;
-  const ext = re.exec(name)[1];
+  const ext = (/(?:\.([^.]+))?$/.exec(name)[1] || '').toLowerCase();
   const label = escapeHtml(name);
-  const details = info ? ` <span class="uk-text-small uk-text-muted">${escapeHtml(info)}</span>` : '';
-  let html = ''
+  const details = info ? `<span class="fmeta">${escapeHtml(info)}</span>` : '';
+  const badge = ext ? escapeHtml(ext.toUpperCase().slice(0, 4)) : '?';
+  const link = ext === 'hpgl' ? 'selectFile' : 'no-selectFile';
+  let actions = '';
 
-  switch (ext) {
-    case 'hpgl':
-      html = `<div class="uk-grid uk-grid-small">
-                <div class="uk-width-expand">
-                  <a href="#" class="selectFile" data-filename="${label}">
-                    <span>${label}</span>
-                  </a>${details}
-                </div>
-                <div class="uk-width-auto uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link previewFile" data-filename="${label}" title="Preview" data-uk-tooltip data-uk-icon="icon: image"></a>
-                  <a href="#" class="uk-icon-link deleteFile lock-edit" data-filename="${label}" title="Delete" data-uk-tooltip data-uk-icon="icon: close"></a>
-                </div>
-              </div>`;
-        break;
-    case 'svg':
-      html = `<div class="uk-grid uk-grid-small">
-                <div class="uk-width-expand">
-                  <a href="#" class="no-selectFile" data-filename="${label}">
-                    <span>${label}</span>
-                  </a>${details}
-                </div>
-                <div class="uk-width-auto uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link convertFile lock-edit" data-filename="${label}" title="Convert to HPGL" data-uk-tooltip data-uk-icon="icon: bolt"></a>
-                  <a href="#" class="uk-icon-link deleteFile lock-edit" data-filename="${label}" title="Delete" data-uk-tooltip data-uk-icon="icon: close"></a>
-                </div>
-              </div>`;
-        break;
-    default:
-      html = `<div class="uk-grid uk-grid-small">
-                <div class="uk-width-expand">
-                  <a href="#" class="no-selectFile" data-filename="${label}">
-                    <span>${label}</span>
-                  </a>${details}
-                </div>
-                <div class="uk-width-auto uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link deleteFile lock-edit" data-filename="${label}" title="Delete" data-uk-tooltip data-uk-icon="icon: close"></a>
-                </div>
-              </div>`;
+  if (ext === 'hpgl') {
+    actions += `<a href="#" class="uk-icon-link previewFile" data-filename="${label}" title="Preview" data-uk-tooltip data-uk-icon="icon: image"></a>`;
+  } else if (ext === 'svg') {
+    actions += `<a href="#" class="uk-icon-link convertFile lock-edit" data-filename="${label}" title="Convert to HPGL" data-uk-tooltip data-uk-icon="icon: bolt"></a>`;
   }
+  actions += `<a href="#" class="uk-icon-link deleteFile lock-edit" data-filename="${label}" title="Delete" data-uk-tooltip data-uk-icon="icon: close"></a>`;
 
-  return html;
+  return `<div class="file-row">
+            <span class="ftype">${badge}</span>
+            <div class="fmain">
+              <a href="#" class="fname ${link}" data-filename="${label}" title="${label}">${label}</a>${details}
+            </div>
+            <div class="fact">${actions}</div>
+          </div>`;
 }
 
 // Simplify notification handling

@@ -80,6 +80,10 @@ function updateFiles() {
             `<li> ${renderFileListElement(content.name, info)} </li>`
           );
         }
+        const current = jQuery("#fileName").val();
+        jQuery("#fileList .selectFile").each(function () {
+          if (jQuery(this).attr("data-filename") === current) jQuery(this).closest("li").addClass("is-selected");
+        });
         updateStorage(response.data.content);
       }
     })
@@ -156,14 +160,15 @@ function selectFile(element) {
   jQuery("#fileName").val(filename);
 
   // Update list
-  jQuery("#fileList li").removeClass("uk-alert-primary");
+  jQuery("#fileList li").removeClass("is-selected");
   const li = jQuery(element).parents("li")[0];
-  if (li) jQuery(li).addClass("uk-alert-primary");
+  if (li) jQuery(li).addClass("is-selected");
 
   // Update sidebar
   jQuery(".selectedFilename").text(filename);
 
   loadFileInfo(filename);
+  previewSelected(filename);
 }
 
 // What the selected file draws: size, time estimate and pens
@@ -259,41 +264,62 @@ var hpglViewer = null;
 
 function previewFile(element) {
   const filename = jQuery(element).attr("data-filename");
-  showPreview(filename, "/uploads/" + encodeURIComponent(filename), null);
+  showPreview(filename, "/uploads/" + encodeURIComponent(filename), null, false);
 }
 
 // The file shown in the preview, and whether the cursor follows the plot that is running
 var previewedFile = null;
 var watchingPlot = false;
 
-// Show a drawing in the preview dialog. `conversion` is {name, summary} for a conversion that has
-// not been saved yet (it can be saved or abandoned from the dialog), null for a file in the list.
+// The conversion shown in the preview: {name, summary} for one that has not been saved yet (it can be
+// saved, or abandoned by looking at something else), null for a file in the list.
 var previewedConversion = null;
 
-function showPreview(title, url, conversion, watch) {
+// The preview is a panel, so it can be hidden, folded up or parked where nothing has a size
+function previewVisible() {
+  return jQuery("#previewStage").is(":visible");
+}
+
+// Show a drawing in the preview panel. `quiet` is for a file that was only selected: it does not bring a
+// hidden panel back or move the page, and does not close the conversion options.
+function showPreview(title, url, conversion, watch, quiet) {
   previewedConversion = conversion;
   previewedFile = title;
   watchingPlot = !!watch;
   jQuery("#previewFileName").text(title);
+  jQuery("#previewUnsaved").toggleClass("uk-hidden", !conversion);
   jQuery("#previewInfo").text("Loading...");
   jQuery("#previewSummary").text(conversion ? describeSummary(conversion.summary) : "");
   jQuery("#previewActions").toggleClass("uk-hidden", !conversion);
+  updateWatchButton();
 
-  const open = function () {
-    // The canvas is sized from its container, which only has a width once the modal is visible
-    UIkit.util.once("#modal-previewFile", "shown", function () {
-      loadPreview(url);
-    });
-    UIkit.modal("#modal-previewFile").show();
-  };
-  // A dialog that is still closing would swallow the new one
-  const convertModal = UIkit.modal("#modal-convertFile");
-  if (convertModal.isToggled()) {
-    UIkit.util.once("#modal-convertFile", "hidden", open);
-    convertModal.hide();
-  } else {
-    open();
+  if (!quiet) {
+    const convertModal = UIkit.modal("#modal-convertFile");
+    if (convertModal.isToggled()) convertModal.hide();
+    if (window.WebPlotterLayoutUI) WebPlotterLayoutUI.reveal("preview");
   }
+  loadPreview(url);
+}
+
+// A file was selected in the list: show it, unless that would replace a conversion that is not saved yet
+function previewSelected(filename) {
+  if (previewedConversion || !previewVisible()) return;
+  const watch = watchingPlot && filename === currentPlotFile;
+  showPreview(filename, "/uploads/" + encodeURIComponent(filename), null, watch, true);
+}
+
+// The panels were changed: show the selected file if the preview has just come back, and stop a replay
+// that nobody can see
+function onPanelsChanged() {
+  if (!previewVisible()) {
+    if (hpglViewer && hpglViewer.isReplaying()) {
+      hpglViewer.stopReplay();
+      jQuery("#replayToggle").text("Replay");
+    }
+    return;
+  }
+  const file = jQuery("#fileName").val();
+  if (file && !previewedConversion && previewedFile !== file) previewSelected(file);
 }
 
 function describeSummary(summary) {
@@ -310,7 +336,30 @@ function describeSummary(summary) {
 // Preview files bigger than this would freeze a phone while parsing
 const PREVIEW_MAX_BYTES = 30 * 1024 * 1024;
 
+// Show the canvas, or say there is nothing to show
+function setPreviewDrawing(has) {
+  jQuery("#previewStage").toggleClass("has-drawing", has);
+  if (!has) jQuery("#previewReplayBar, #previewUsePens").addClass("uk-hidden");
+  if (!has) jQuery("#previewLegend").empty();
+}
+
+// The canvas is as wide as its stage: fit the drawing again when the panel changes width (a column was
+// resized, the panel was moved, or it was folded up and opened again)
+function watchPreviewSize(stage) {
+  if (!window.ResizeObserver) return;
+  let width = stage.clientWidth;
+  new ResizeObserver(function () {
+    const now = stage.clientWidth;
+    if (now && now !== width && hpglViewer && hpglViewer.bounds) {
+      hpglViewer.resizeCanvas();
+      hpglViewer.fit();
+    }
+    if (now) width = now;
+  }).observe(stage);
+}
+
 function loadPreview(url) {
+  const requested = previewedFile;
   axios
     .get(url, {
       responseType: "text",
@@ -318,7 +367,10 @@ function loadPreview(url) {
       params: { _: Date.now() }, // always show the latest version of a re-converted file
     })
     .then(function (response) {
+      // Something else was chosen while this was loading
+      if (requested !== previewedFile) return;
       if (response.data.length > PREVIEW_MAX_BYTES) {
+        setPreviewDrawing(false);
         jQuery("#previewInfo").text("File is too large to preview");
         return;
       }
@@ -328,11 +380,15 @@ function loadPreview(url) {
           onHover: showPreviewCoords,
           onReplay: showReplayProgress,
         });
+        watchPreviewSize(document.getElementById("previewStage"));
       }
+      // The canvas takes its size from the stage, so the stage has to show it first
+      setPreviewDrawing(true);
       const stats = hpglViewer.loadHPGL(response.data);
       resetPreviewTools(stats);
 
       if (stats.paths == 0) {
+        setPreviewDrawing(false);
         jQuery("#previewInfo").text("Nothing to preview: the file contains no pen-down movements");
         return;
       }
@@ -347,6 +403,8 @@ function loadPreview(url) {
       if (watchingPlot) followPlot(jQuery("#bytes_written").text());
     })
     .catch(function (error) {
+      if (requested !== previewedFile) return;
+      setPreviewDrawing(false);
       jQuery("#previewInfo").text("Preview failed: " + errorMessage(error));
       console.error(error);
     });
@@ -430,10 +488,27 @@ function seekReplay(value) {
   jQuery("#replayTime").text(formatDuration((Number(value) / 1000) * hpglViewer.replaySeconds()));
 }
 
-// Watch the plot that is running: the cursor follows the bytes sent to the plotter
+// Watch the plot that is running: the cursor follows the bytes sent to the plotter. Pressed again, it stops.
 function watchPlot() {
+  if (watchingPlot) {
+    stopWatching();
+    return;
+  }
   if (!currentPlotFile) return;
   showPreview(currentPlotFile, "/uploads/" + encodeURIComponent(currentPlotFile), null, true);
+}
+
+function stopWatching() {
+  watchingPlot = false;
+  if (hpglViewer) {
+    hpglViewer.setCursor(null);
+    if (hpglViewer.paths.length > 0) jQuery("#previewReplayBar").removeClass("uk-hidden");
+  }
+  updateWatchButton();
+}
+
+function updateWatchButton() {
+  jQuery(".watchPlot").text(watchingPlot ? "Stop watching" : "Watch the plot");
 }
 
 function followPlot(text) {
@@ -587,8 +662,8 @@ function savePreview() {
     .then(function (response) {
       notify(response.data, "success");
       previewedConversion = null;
+      jQuery("#previewActions, #previewUnsaved").addClass("uk-hidden");
       updateFiles();
-      UIkit.modal("#modal-previewFile").hide();
     })
     .catch(function (error) {
       notify(errorMessage(error), "danger");
@@ -598,11 +673,7 @@ function savePreview() {
 
 // Back from the preview to the conversion options
 function backToConvert() {
-  const preview = UIkit.modal("#modal-previewFile");
-  UIkit.util.once("#modal-previewFile", "hidden", function () {
-    UIkit.modal("#modal-convertFile").show();
-  });
-  preview.hide();
+  UIkit.modal("#modal-convertFile").show();
 }
 
 // Start conversion
@@ -642,23 +713,6 @@ function convertFile() {
     .then(function () {
       jQuery("#loader").addClass("uk-hidden");
     });
-}
-
-// Display card
-function closeCard(element) {
-  const card = jQuery(element).data("card");
-
-  jQuery(element).addClass("uk-hidden");
-  jQuery("#" + card).addClass("uk-hidden");
-  jQuery(".showCard[data-card='" + card + "']").removeClass("uk-hidden");
-}
-
-function showCard(element) {
-  const card = jQuery(element).data("card");
-
-  jQuery(element).addClass("uk-hidden");
-  jQuery("#" + card).removeClass("uk-hidden");
-  jQuery(".closeCard[data-card='" + card + "']").removeClass("uk-hidden");
 }
 
 // Clear Logs
@@ -756,6 +810,7 @@ function appendErrorLog(text) {
 var currentPlotFile = null;
 
 function applyPlotState(state) {
+  updateTransport(state);
   currentPlotFile = state.running && state.cursor_ok ? state.file : null;
   jQuery(".watchPlot").toggleClass("uk-hidden", !currentPlotFile);
   jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
@@ -768,13 +823,14 @@ function applyPlotState(state) {
     hideWaitNotice();
   }
   setEta(state.running ? state.eta : null);
+  if (!state.running && watchingPlot) stopWatching();
 
   if (state.running && state.file) {
     jQuery(".selectedFilename").text(state.file);
   }
-  jQuery(".printProgress").val(state.progress || 0);
+  setProgress(state.progress || 0);
   if (state.bytes_written !== undefined) {
-    jQuery("#bytes_written").text(state.bytes_written);
+    setBytesWritten(state.bytes_written);
     followPlot(state.bytes_written);
   }
 
@@ -799,10 +855,58 @@ function applyPlotState(state) {
   }
 }
 
+// The transport bar at the top of the page: what the plot is doing, and why it is held back
+const STATE_LABELS = {
+  idle: "Idle",
+  plotting: "Plotting",
+  paused: "Paused",
+  pen_change: "Pen change",
+  paper_change: "Paper change",
+  disconnected: "Disconnected",
+  reconnect: "Plotter is back",
+};
+
+function plotStateName(state) {
+  if (!state.running) return "idle";
+  if (!state.paused) return "plotting";
+  return state.wait_reason in STATE_LABELS ? state.wait_reason : "paused";
+}
+
+function updateTransport(state) {
+  const name = plotStateName(state);
+  jQuery("#statePill").attr("data-s", name).text(STATE_LABELS[name]);
+  jQuery("#transport").toggleClass("is-plotting", name === "plotting").toggleClass("is-held", !!(state.running && state.paused));
+  jQuery(".penText").text(state.running && state.pen ? state.pen : "-");
+  if (!state.running) jQuery(".bytesText").html("&nbsp;");
+  const notice = state.running && state.paused ? WAIT_NOTICES[state.wait_reason] : null;
+  jQuery("#transportMessage").prop("hidden", !notice).text(notice ? notice.title + ". " + notice.text(state) : "");
+}
+
+function setProgress(value) {
+  jQuery(".printProgress").val(value);
+  jQuery(".pctText").text(Math.round(Number(value) || 0) + "%");
+}
+
+function setBytesWritten(value) {
+  jQuery("#bytes_written").text(value);
+  const match = /([0-9]+) bytes (?:written|sent)/.exec(value || "");
+  if (match && Number(match[1]) > 0) jQuery(".bytesText").text(formatBytes(Number(match[1])) + " sent");
+}
+
+// 754 -> "12:34", 3700 -> "1:01:40"
+function formatClock(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
+}
+
 // Time left
 function setEta(eta) {
-  const text = eta ? "Time left: about " + formatDuration(eta.remaining) + " (of " + formatDuration(eta.total) + ")" : "";
-  jQuery(".etaText").text(text);
+  jQuery(".etaClock").text(eta ? formatClock(eta.remaining) : "--:--");
+  jQuery(".etaClock").parent().attr("title", eta ? "About " + formatDuration(eta.remaining) + " left, of " + formatDuration(eta.total) : "");
 }
 
 // The dialog shown while the plot is held back, by wait_reason
@@ -889,27 +993,29 @@ function renderQueue(queue) {
   jQuery("#queueEmpty").toggleClass("uk-hidden", queue.items.length > 0);
   jQuery("#queueMessage").text(queue.message || "");
   jQuery(".startQueue").prop("disabled", queue.active || queue.items.length === 0);
-  for (const item of queue.items) {
+  queue.items.forEach(function (item, index) {
     const id = Number(item.id);
     const running = item.status === "running";
-    const row = jQuery("<li>").toggleClass("uk-text-muted", !running && queue.active);
-    row.append(jQuery("<span>").text(item.file));
-    if (item.pens) row.append(jQuery("<span class='uk-text-small uk-text-muted'>").text(" (pens " + item.pens + ")"));
+    const row = jQuery("<li>").toggleClass("is-running", running).toggleClass("uk-text-muted", !running && queue.active);
+    row.append(jQuery("<span class='ftype num'>").text(index + 1));
+    const name = jQuery("<div class='q-name'>").append(jQuery("<span>").text(item.file));
+    if (item.pens) name.append(jQuery("<span class='uk-text-small uk-text-muted'>").text(" (pens " + item.pens + ")"));
+    row.append(name);
     if (running) {
-      row.append(jQuery("<span class='uk-label uk-margin-small-left'>").text("plotting"));
+      row.append(jQuery("<span class='uk-label'>").text("plotting"));
     } else {
       row.append(
-        `<div class="uk-margin-small-top">` +
-          `<label class="uk-text-small uk-margin-small-right"><input class="uk-checkbox queuePauseAfter" type="checkbox" data-id="${id}"` +
+        `<div class="q-actions">` +
+          `<label><input class="uk-checkbox queuePauseAfter" type="checkbox" data-id="${id}"` +
           `${item.pause_after ? " checked" : ""}> Paper change after</label>` +
-          `<a href="#" class="uk-icon-link uk-margin-small-right queueMove" data-id="${id}" data-direction="up" title="Move up" data-uk-icon="icon: arrow-up"></a>` +
-          `<a href="#" class="uk-icon-link uk-margin-small-right queueMove" data-id="${id}" data-direction="down" title="Move down" data-uk-icon="icon: arrow-down"></a>` +
+          `<a href="#" class="uk-icon-link queueMove" data-id="${id}" data-direction="up" title="Move up" data-uk-icon="icon: arrow-up"></a>` +
+          `<a href="#" class="uk-icon-link queueMove" data-id="${id}" data-direction="down" title="Move down" data-uk-icon="icon: arrow-down"></a>` +
           `<a href="#" class="uk-icon-link queueRemove" data-id="${id}" title="Remove" data-uk-icon="icon: close"></a>` +
           `</div>`
       );
     }
     list.append(row);
-  }
+  });
 }
 
 function updateQueue() {

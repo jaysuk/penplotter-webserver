@@ -10,574 +10,469 @@
   <!-- UIkit CSS -->
   <link rel="stylesheet" href="{{url_for('static', filename='vendor/uikit.min.css')}}" />
   <link rel="stylesheet" href="{{url_for('static', filename='vendor/dropzone.min.css')}}">
-  <link rel="stylesheet" href="{{url_for('static', filename='css/main.css')}}">
   <link rel="stylesheet" href="{{url_for('static', filename='css/theme.css')}}">
+  <link rel="stylesheet" href="{{url_for('static', filename='css/console.css')}}">
   <script src="{{url_for('static', filename='theme.js')}}"></script>
-  <!-- <link rel="stylesheet" href=/static/css/main.css> -->
 </head>
 
-<body>
+<body class="console">
 
-  <!--HEADER-->
-  <header id="top-head" class="uk-position-fixed">
-    <div class="uk-container uk-container-expand uk-background-primary">
-      <nav class="uk-navbar uk-light" data-uk-navbar="mode:click; duration: 250">
-        <div class="uk-navbar-left">
-          <div class="uk-navbar-item uk-hidden@m">
-            <a class="uk-logo" href="#"><img class="custom-logo" src="{{url_for('static', filename='img/logo.png')}}"
-                alt=""></a>
-          </div>
-          <ul class="uk-navbar-nav uk-visible@m">
-            <li><a href="#"><span class="plotter_name">Default Plotter</span></a></li>
-          </ul>
-        </div>
-        <div class="uk-navbar-right">
-          <ul class="uk-navbar-nav uk-hidden@m">
-            <li><a class="uk-navbar-toggle" data-uk-toggle data-uk-navbar-toggle-icon href="#offcanvas-nav"
-                title="Offcanvas" data-uk-tooltip></a></li>
-          </ul>
-        </div>
-      </nav>
-    </div>
-  </header>
-  <!--/HEADER-->
+  <!-- Icons used by the panel titles -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+      <symbol id="i-cross" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m5 8 5 4-5 4M12 17h7"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 16l4-5 3 3 5-7"/></symbol>
+      <symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9M6.3 7a8 8 0 1 0 11.4 0"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l1-4L17 4l3 3L8 19zM14 7l3 3"/></symbol>
+    </defs>
+  </svg>
 
-  <!-- LEFT BAR -->
-  <aside id="left-col" class="uk-light uk-visible@m">
-    <br>
-    <div class="left-logo uk-flex uk-flex-middle">
-      <img class="custom-logo" src="{{url_for('static', filename='img/logo.png')}}" alt="">
-      <!-- <img class="custom-logo" src=/static/img/logo.png alt=""> -->
-    </div>
+  <div class="cs-wrap">
 
-    <!-- <div class="left-content-box content-box-dark">
-          <img src="{{url_for('static', filename='img/user.png')}}" alt="" class="profile-img">
-          <h4 class="uk-text-center uk-margin-remove-vertical text-light">Web Plotter</h4>
-        </div> -->
-
-    <div class="left-nav-wrap">
-      <div class="left-content-box uk-margin-top">
-        <h5>ACTIONS</h5>
-        <!-- <ul class="uk-nav uk-nav-default">
-          <li><a href="#" class="actionsButton"><span data-uk-icon="icon: cog"class="uk-margin-small-right"></span>ACTIONS</a></li>
-        </ul> -->
-        <ul class="uk-nav uk-nav-default uk-nav-parent-icon" data-uk-nav id ="actionsContents">
-          <li><a href="#" class="action-tasmota-toggle actionTasmota"><span data-uk-icon="icon: bolt"
-                class="uk-margin-small-right"></span>Toggle Tasmota</a></li>
-          <li><a href="#" class="action-open-reboot" uk-toggle="target: #modal-reboot"><span
-                data-uk-icon="icon: refresh" class="uk-margin-small-right"></span>Reboot Pi</a></li>
-          <li><a href="#" class="action-open-poweroff" uk-toggle="target: #modal-poweroff"><span
-                data-uk-icon="icon: close" class="uk-margin-small-right"></span>Poweroff Pi</a></li>
-        </ul>
+    <!-- HEADER -->
+    <header class="cs-top">
+      <div class="cs-brand">
+        <span class="cs-mark" aria-hidden="true"><svg class="ico" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pen"/></svg></span>
+        <span>Web Plotter</span>
+        <span class="cs-plotter plotter_name">Default Plotter</span>
       </div>
-      <div class="left-content-box uk-margin-top ">
-        <h5>PRINT PROGRESS</h5>
-        <div>
-          <progress id="printProgress" class="uk-progress printProgress" value="0" max="100"></progress>
-          <span class="uk-text-small uk-text-muted">Selected File: <span id="selectedFilename"
-              class="uk-text-success selectedFilename"></span></span>
-          <div class="uk-text-small uk-text-muted etaText"></div>
-        </div>
-        <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
-          <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
-                class="uk-margin-small-right"></span>Pause Print</a></li>
-          <li><a href="#" class="resumePlot uk-hidden"><span data-uk-icon="icon: play-circle"
-                class="uk-margin-small-right"></span>Resume Print</a></li>
-          <li><a href="#" class="uk-button-danger stopPlot"><span data-uk-icon="icon: close"
-                class="uk-margin-small-right"></span>Stop Print</a></li>
-        </ul>
+      <span class="cs-grow"></span>
+      <a href="#" class="uk-icon-link actionOpenConfig" title="Settings" data-uk-tooltip data-uk-icon="icon: settings"></a>
+    </header>
+    <!-- /HEADER -->
+
+    <!-- TRANSPORT BAR: the plot at a glance. The classes are the ones main.js already updates. -->
+    <section class="cs-transport" id="transport" aria-label="Plot status">
+      <span class="pill" id="statePill" data-s="idle">Idle</span>
+      <div class="cs-tfile">
+        <span class="cs-small">File</span>
+        <span class="selectedFilename"></span>
+      </div>
+      <div class="cs-tprog">
+        <progress class="uk-progress printProgress" value="0" max="100"></progress>
+        <div class="cs-trow"><span>Pen <b class="penText">-</b></span><b class="num pctText">0%</b><span class="num bytesText">&nbsp;</span></div>
+      </div>
+      <div class="cs-tbig"><span class="cs-small">Time left</span><b class="etaClock">--:--</b></div>
+      <div class="cs-tbtns">
+        <a href="#" class="startPlot uk-button uk-button-primary lock-edit">Start plot</a>
+        <span class="cs-tbtns unlock-edit uk-hidden">
+          <a href="#" class="uk-button uk-button-default pausePlot">Pause</a>
+          <a href="#" class="uk-button uk-button-primary resumePlot uk-hidden">Resume</a>
+          <a href="#" class="uk-button uk-button-danger stopPlot">Stop</a>
+        </span>
+      </div>
+      <p class="cs-tmsg" id="transportMessage" hidden></p>
+    </section>
+    <!-- /TRANSPORT BAR -->
+
+    <!-- PANEL SHELF: one chip per panel to show or hide it (filled in by layout-ui.js) -->
+    <nav class="cs-shelf" id="panelShelf" aria-label="Show or hide panels"></nav>
+
+    <main class="cs-cols" id="cols">
+
+      <div class="cs-col" data-col="left">
+
+        <!-- Uploaded files -->
+        <section class="cs-panel" data-panel="files" style="--m-order:5">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-file"/></svg>Files</h2>
+            <span class="panel-icons">
+              <a href="#" class="uk-icon-link updateFiles" title="Refresh the list" data-uk-tooltip data-uk-icon="icon: refresh"></a>
+            </span>
+          </header>
+          <div class="cs-pbody">
+            <div class="cs-scroll">
+              <ul id="fileList" class="uk-list uk-list-divider uk-margin-remove"></ul>
+            </div>
+            <p id="storageInfo" class="storage-line uk-text-muted"></p>
+            <div class="cs-row uk-text-small">
+              <span>Delete files older than</span>
+              <input id="oldDays" class="uk-input uk-form-small uk-form-width-xsmall" type="number" min="1" max="3650" value="30" aria-label="Days">
+              <span>days</span>
+              <button class="uk-button uk-button-default uk-button-small deleteOldFiles lock-edit" type="button">Delete</button>
+              <button class="uk-button uk-button-default uk-button-small clearCache lock-edit" type="button"
+                title="Remove analyses, previews and other copies that are made again when needed">Clear cache</button>
+            </div>
+          </div>
+        </section>
+        <!-- /Uploaded files -->
+
+        <!-- Upload -->
+        <section class="cs-panel" data-panel="upload" style="--m-order:6">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-upload"/></svg>Upload</h2>
+            <span class="panel-icons">
+              <a href="#" class="uk-icon-link createTextButton" title="Make a drawing from typed text" data-uk-tooltip data-uk-icon="icon: pencil"></a>
+            </span>
+          </header>
+          <div class="cs-pbody">
+            <form id="uploadFiles" action="{{ url_for('upload_files') }}" class="dropzone"></form>
+          </div>
+        </section>
+        <!-- /Upload -->
+
+        <!-- Queue -->
+        <section class="cs-panel" data-panel="queue" style="--m-order:7">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-queue"/></svg>Plot queue</h2>
+          </header>
+          <div class="cs-pbody">
+            <ul id="queueList" class="uk-list uk-list-divider uk-margin-remove"></ul>
+            <p id="queueEmpty" class="cs-note">Nothing in the queue. Choose a file and its settings, then Add to queue.</p>
+            <p id="queueMessage" class="cs-note"></p>
+            <div class="uk-grid-small" data-uk-grid>
+              <div><button class="startQueue uk-button uk-button-primary uk-button-small" type="button" disabled>Start queue</button></div>
+              <div><button class="clearQueue uk-button uk-button-default uk-button-small" type="button">Clear</button></div>
+            </div>
+            <p class="cs-note">Stop holds the queue: the file that was plotting stays at the top.</p>
+          </div>
+        </section>
+        <!-- /Queue -->
+
       </div>
 
-      <div class="left-content-box uk-margin-top hidden" id="chartContents">
-        <h5>BUFFER SPACE</h5>
-        <div>
-          <canvas id="chart"></canvas>
-        </div>
-      </div>
+      <div class="cs-split" data-split="lw" role="separator" aria-orientation="vertical" aria-label="Width of the left column" tabindex="0"></div>
 
-      <div class="left-content-box uk-margin-top uk-hidden" id="tasmota_control" >
-        <h5>TASMOTA CONTROL</h5>
-        <div class="uk-margin-small uk-grid-small uk-child-width-auto uk-grid">
-          <label><input id="tasmota" class="uk-checkbox" type="checkbox" name="tasmota" form="plotterData" checked> Shutdown <br> when plot
-            is completed</label>
-        </div>
-      </div>
-    </div>
-    <div class="bar-bottom">
-      <ul class="uk-subnav uk-flex uk-flex-center uk-child-width-1-5" data-uk-grid>
-        <li>
-          <a href="#" class="uk-icon-link" data-uk-icon="icon: home" title="Home" data-uk-tooltip></a>
-        </li>
-        <li>
-          <a href="#" class="uk-icon-link actionOpenConfig" data-uk-tooltip="Set Config File"
-            data-uk-icon="icon: settings" title="Edit Config File" data-uk-tooltip></a>
-        </li>
-        <li>
-          <a href="#" class="uk-icon-link action-open-reboot" uk-toggle="target: #modal-reboot"
-            data-uk-tooltip="Reboot Pi" data-uk-icon="icon: refresh"></a>
-        </li>
-        <li>
-          <a href="#" class="uk-icon-link action-open-poweroff" uk-toggle="target: #modal-poweroff"
-            data-uk-tooltip="Poweroff Pi" data-uk-icon="icon: sign-out"></a>
-        </li>
-      </ul>
-    </div>
-  </aside>
-  <!-- /LEFT BAR -->
+      <div class="cs-col" data-col="center">
 
-  <!-- CONTENT -->
-  <div id="content" data-uk-height-viewport="expand: true">
-    <div class="uk-container uk-container-expand">
-
-      <div class="uk-grid uk-grid-medium" data-uk-grid uk-sortable="handle: .sortable-icon">
-
-        <!-- Uploader -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>File Upload</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-mix createTextButton" title="Make a drawing from typed text"
-                    data-uk-tooltip data-uk-icon="icon: pencil"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="uploadFiles-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="uploadFiles-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
+        <!-- Preview: the viewer (hpgl_viewer.js) draws into the canvas; its size follows the stage -->
+        <section class="cs-panel" data-panel="preview" style="--m-order:1">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-eye"/></svg>Preview</h2>
+          </header>
+          <div class="cs-pbody">
+            <div class="pv-head">
+              <span class="pv-name" id="previewFileName"></span>
+              <span class="pill pv-unsaved uk-hidden" id="previewUnsaved" data-s="paused">Not saved yet</span>
             </div>
-            <div id="uploadFiles-card" class="uk-card-body">
-              <div class="chart-container uk-panel uk-panel-scrollable ">
-                <form id="uploadFiles" action="{{ url_for('upload_files') }}" class="dropzone"></form>
-              </div>
+            <div class="pv-stage" id="previewStage">
+              <canvas id="hpglCanvas" width="400" height="200"></canvas>
+              <p class="pv-empty">Choose an HPGL file to see what it will draw.</p>
+            </div>
+            <div class="cs-row pv-tools">
+              <span id="previewCoords" class="uk-text-small uk-text-muted pv-coords"></span>
+              <label class="uk-text-small"><input id="previewTravel" class="uk-checkbox" type="checkbox"> Pen-up travel</label>
+              <button class="uk-button uk-button-default uk-button-small previewFit" type="button">Fit</button>
+            </div>
+            <div id="previewLegend" class="uk-text-small"></div>
+            <button id="previewUsePens" class="uk-button uk-button-default uk-button-small uk-hidden usePreviewPens"
+              type="button" title="Tick only the pens shown here in the plot settings">Plot only the pens shown</button>
+            <div id="previewReplayBar" class="cs-row uk-hidden">
+              <button id="replayToggle" class="uk-button uk-button-default uk-button-small" type="button">Replay</button>
+              <select id="replaySpeed" class="uk-select uk-form-small pv-speed" title="Replay speed, times the plotter's pen speed" aria-label="Replay speed">
+                <option value="1">x1</option>
+                <option value="10">x10</option>
+                <option value="60" selected>x60</option>
+                <option value="300">x300</option>
+                <option value="1000">x1000</option>
+              </select>
+              <input id="replaySeek" class="uk-range pv-seek" type="range" min="0" max="1000" value="0" aria-label="Replay position">
+              <span id="replayTime" class="uk-text-small num"></span>
+            </div>
+            <p id="previewInfo" class="uk-text-small uk-text-muted"></p>
+            <p id="previewSummary" class="uk-text-small"></p>
+            <div id="previewActions" class="uk-grid-small uk-child-width-1-2 uk-hidden" data-uk-grid>
+              <div><button class="uk-button uk-button-default uk-width-1-1 backToConvert" type="button">Change options</button></div>
+              <div><button class="uk-button uk-button-primary uk-width-1-1 savePreview" type="button">Save as HPGL</button></div>
             </div>
           </div>
-        </div>
-        <!-- /Uploader -->
-
-        <!-- Uploaded -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Uploaded Files</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-mix updateFiles" title="Refresh List" data-uk-tooltip
-                    data-uk-icon="icon: refresh"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="fileList-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="fileList-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
-            </div>
-            <div id="fileList-card" class="uk-card-body">
-              <div class="chart-container uk-panel uk-panel-scrollable">
-                <ul id="fileList" class="uk-list uk-list-divider"></ul>
-              </div>
-              <p id="storageInfo" class="uk-text-small uk-text-muted uk-margin-small-top uk-margin-remove-bottom"></p>
-              <div class="uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
-                <div class="uk-width-auto"><span class="uk-text-small">Delete files older than</span></div>
-                <div class="uk-width-auto">
-                  <input id="oldDays" class="uk-input uk-form-small uk-form-width-xsmall" type="number" min="1" max="3650" value="30">
-                </div>
-                <div class="uk-width-auto"><span class="uk-text-small">days</span></div>
-                <div class="uk-width-auto">
-                  <button class="uk-button uk-button-default uk-button-small deleteOldFiles lock-edit" type="button">Delete</button>
-                </div>
-                <div class="uk-width-expand uk-text-right">
-                  <button class="uk-button uk-button-default uk-button-small clearCache lock-edit" type="button"
-                    title="Remove analyses, previews and other copies that are made again when needed">Clear cache</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- /Uploaded -->
-
-        <!-- Settings -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Plotter Settings</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <!-- <a href="#" class="uk-icon-link" title="Configuration" data-uk-tooltip data-uk-icon="icon: cog"></a> -->
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="plotterData-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="plotterData-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
-            </div>
-            <div id="plotterData-card" class="uk-card-body">
-              <div class="chart-container">
-                <form id="plotterData">
-                  <fieldset class="uk-fieldset uk-grid-small" uk-grid>
-
-                    <input id="fileName" name="file" type="hidden">
-
-                    <div class="uk-width-1-2@s">
-                      <label class="uk-form-label" for="form-stacked-text">COM Port</label>
-                      <div class="uk-margin-small">
-                        <div class="uk-grid uk-grid-small">
-                          <div class="uk-width-expand">
-                            <select id="portList" class="uk-select portList" name="port">
-                            </select>
-                          </div>
-                          <div class="uk-width-auto uk-text-right panel-icons">
-                            <a href="#" class="uk-icon-link mac-button updatePorts" title="Refresh Port List"
-                              data-uk-tooltip data-uk-icon="icon: refresh"></a>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="uk-width-1-2@s">
-                      <label class="uk-form-label" for="form-stacked-text">Plotting Device</label>
-                      <div class="uk-margin-small">
-                        <select id="device" input="device" class="uk-select" name="device">
-                          <option value="hp7475a">HP 7475A</option>
-                          <option value="hp7440a">HP 7440A</option>
-                          <option value="hp7550">HP 7550</option>
-                          <option value="dxy">Roland DXY 1xxx</option>
-                          <option value="sketchmate">Roland Sketchmate</option>
-                          <option value="dmp_161">Houston Inst. DMP-161</option>
-                          <option value="designmate">Calcomp Designmate</option>
-                          <option value="artisan">Calcomp Artisan</option>
-                          <option value="mp4200">Graptech MP4200</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div class="uk-width-1-2@s">
-                      <label class="uk-form-label" for="form-stacked-text">Baudrate</label>
-                      <div class="uk-margin-small">
-                        <div class="uk-grid uk-grid-small">
-                          <div class="uk-width-expand">
-                            <select id="baudRate" class="uk-select baudRate" name="baudrate">
-                              <option value="9600">9600</option>
-                              <option value="19200">19200</option>
-                              <option value="38400">38400</option>
-                              <option value="4800">4800</option>
-                              <option value="2400">2400</option>
-                              <option value="1200">1200</option>
-                            </select>
-                          </div>
-                          <div class="uk-width-auto uk-text-right panel-icons">
-                            <a href="#" class="uk-icon-link mac-button updateBaud" title="Auto detect baudrate"
-                              data-uk-tooltip data-uk-icon="icon: search"></a>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="uk-width-1-2@s">
-                      <label class="uk-form-label" for="form-stacked-text">Flow Control</label>
-                      <div class="uk-margin-small">
-                        <select id="flowControl" class="uk-select" name="flowControl">
-                          <option value="CTS/RTS">CTS/RTS</option>
-                          <option value="HP-IB">HP-IB</option>
-                          <option value="XON/XOFF">XON/XOFF</option>
-                          <option value="Software">Software flow ctrl.</option>
-                          <option value="None">None</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div class="uk-width-1-1">
-                      <label class="uk-form-label" for="penChange">Pen changes</label>
-                      <div class="uk-margin-small">
-                        <select id="penChange" class="uk-select" name="pen_change">
-                          <option value="auto">Automatic (pen carousel)</option>
-                          <option value="pause">Pause for a manual pen change</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <input id="plotPens" name="pens" type="hidden">
-                    <div id="fileInfo" class="uk-width-1-1 uk-hidden">
-                      <div class="uk-alert uk-alert-primary uk-margin-remove">
-                        <p id="fileInfoText" class="uk-margin-remove uk-text-small"></p>
-                        <div id="penChoices" class="uk-margin-small-top uk-hidden">
-                          <span class="uk-text-small uk-text-muted">Plot these pens:</span>
-                          <div id="penChoiceList" class="uk-grid-small uk-child-width-auto uk-grid uk-margin-remove-top"></div>
-                        </div>
-                      </div>
-                    </div>
-                  </fieldset>
-                </form>
-
-                <a href="#" class="startPlot uk-button uk-button-primary uk-width-1-1 uk-margin-top lock-edit"
-                  id="toggleChart">Start Plot</a>
-                <div class="uk-grid-small uk-margin-small-top uk-flex-middle" data-uk-grid>
-                  <div class="uk-width-1-1 uk-width-expand@s">
-                    <a href="#" class="addToQueue uk-button uk-button-default uk-width-1-1">Add to queue</a>
-                  </div>
-                  <div class="uk-width-1-1 uk-width-auto@s">
-                    <label class="uk-text-small"><input id="queuePause" class="uk-checkbox" type="checkbox"> Paper change after</label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- /Settings -->
-
-        <!-- Plotter control -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Plotter Control</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="plotterControl-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="plotterControl-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
-            </div>
-            <div id="plotterControl-card" class="uk-card-body">
-              <div class="chart-container">
-                <p class="uk-text-small uk-text-muted uk-margin-small-bottom">
-                  Move the pen to line up the paper. Uses the port and settings chosen in Plotter Settings, and is
-                  not available while plotting.</p>
-                <div class="uk-grid uk-grid-small" data-uk-grid>
-                  <div class="uk-width-auto">
-                    <div class="uk-grid uk-grid-collapse uk-child-width-1-3 jog-pad">
-                      <div></div>
-                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="1"
-                          title="Up (away from you)" data-uk-icon="icon: arrow-up"></button></div>
-                      <div></div>
-                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="-1" data-dy="0"
-                          title="Left" data-uk-icon="icon: arrow-left"></button></div>
-                      <div><button class="uk-button uk-button-default uk-width-1-1 plotterAction lock-edit" data-action="origin"
-                          title="Go to the plotter's origin (0,0)" data-uk-icon="icon: home"></button></div>
-                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="1" data-dy="0"
-                          title="Right" data-uk-icon="icon: arrow-right"></button></div>
-                      <div></div>
-                      <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="-1"
-                          title="Down (towards you)" data-uk-icon="icon: arrow-down"></button></div>
-                      <div></div>
-                    </div>
-                  </div>
-                  <div class="uk-width-1-1 uk-width-expand@s">
-                    <label class="uk-form-label" for="jogStep">Step</label>
-                    <select id="jogStep" class="uk-select uk-margin-small-bottom">
-                      <option value="0.5">0.5 mm</option>
-                      <option value="1">1 mm</option>
-                      <option value="5" selected>5 mm</option>
-                      <option value="10">10 mm</option>
-                      <option value="50">50 mm</option>
-                    </select>
-                    <div class="uk-button-group uk-width-1-1 uk-margin-small-bottom">
-                      <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_up">Pen up</button>
-                      <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_down">Pen down</button>
-                    </div>
-                    <div class="uk-grid uk-grid-small" data-uk-grid>
-                      <div class="uk-width-expand">
-                        <select id="selectPen" class="uk-select">
-                          <option value="0">Put pen away (0)</option>
-                          <option value="1" selected>Pen 1</option>
-                          <option value="2">Pen 2</option>
-                          <option value="3">Pen 3</option>
-                          <option value="4">Pen 4</option>
-                          <option value="5">Pen 5</option>
-                          <option value="6">Pen 6</option>
-                          <option value="7">Pen 7</option>
-                          <option value="8">Pen 8</option>
-                        </select>
-                      </div>
-                      <div class="uk-width-auto">
-                        <button class="uk-button uk-button-default selectPenButton lock-edit">Pick</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <hr>
-                <div class="uk-grid uk-grid-small uk-flex-middle" data-uk-grid>
-                  <div class="uk-width-expand">
-                    <button class="uk-button uk-button-default uk-width-1-1 traceBounds lock-edit"
-                      title="Move the lifted pen round the area the selected file will draw in">Trace plot area</button>
-                  </div>
-                  <div class="uk-width-auto">
-                    <label class="uk-text-small"><input id="traceDraw" class="uk-checkbox" type="checkbox"> Draw it</label>
-                  </div>
-                </div>
-                <div class="uk-grid uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
-                  <div class="uk-width-auto">
-                    <button class="uk-button uk-button-default plotterPosition lock-edit">Where is the pen?</button>
-                  </div>
-                  <div class="uk-width-expand uk-text-small uk-text-muted" id="penPosition"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- /Plotter control -->
+        </section>
+        <!-- /Preview -->
 
         <!-- Status -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Print Status</h4>
-                </div>
-
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-mix clearLog" title="Clear Log" data-uk-tooltip
-                    data-uk-icon="icon:  trash"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="statusLog-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="statusLog-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
+        <section class="cs-panel" data-panel="status" style="--m-order:2">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-terminal"/></svg>Print status</h2>
+            <span class="panel-icons">
+              <a href="#" class="uk-icon-link clearLog" title="Clear the log" data-uk-tooltip data-uk-icon="icon: trash"></a>
+            </span>
+          </header>
+          <div class="cs-pbody">
+            <div class="log auto-scroll">
+              <code id="statusLog"></code>
+              <code id="bytes_written"></code>
             </div>
-            <div id="statusLog-card" class="uk-card-body">
-              <div class="chart-container uk-panel uk-panel-scrollable auto-scroll">
-                <code id="statusLog"></code>
-                <code id="bytes_written"></code>
-              </div>
-              <a href="#" class="watchPlot uk-button uk-button-default uk-button-small uk-margin-small-top uk-hidden"
+            <div>
+              <a href="#" class="watchPlot uk-button uk-button-default uk-button-small uk-hidden"
                 title="See where the plotter has got to">Watch the plot</a>
             </div>
           </div>
-        </div>
+        </section>
         <!-- /Status -->
 
-        <!-- Queue -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Plot Queue</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="queue-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="queue-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
-            </div>
-            <div id="queue-card" class="uk-card-body">
-              <ul id="queueList" class="uk-list uk-list-divider uk-margin-remove"></ul>
-              <p id="queueEmpty" class="uk-text-small uk-text-muted">Nothing in the queue. Choose a file and its settings, then Add to queue.</p>
-              <p id="queueMessage" class="uk-text-small uk-text-muted"></p>
-              <button class="startQueue uk-button uk-button-primary uk-button-small" type="button" disabled>Start queue</button>
-              <button class="clearQueue uk-button uk-button-default uk-button-small" type="button">Clear</button>
-              <p class="uk-text-small uk-text-muted uk-margin-small-top uk-margin-remove-bottom">Stop holds the queue: the file that was plotting stays at the top.</p>
-            </div>
-          </div>
-        </div>
-        <!-- /Queue -->
-
         <!-- History -->
-        <div class="uk-width-1-2@l">
-          <div class="uk-card uk-card-default uk-card-small mac-card">
-            <div class="uk-card-header mac-browser-bar">
-              <div class="uk-grid uk-grid-small">
-                <div class="uk-width-auto">
-                  <h4>Plot History</h4>
-                </div>
-                <div class="uk-width-expand uk-text-right panel-icons">
-                  <a href="#" class="uk-icon-link mac-button mac-mix updateHistory" title="Refresh History" data-uk-tooltip
-                    data-uk-icon="icon: refresh"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-mix clearHistory" title="Clear History" data-uk-tooltip
-                    data-uk-icon="icon: trash"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
-                    data-uk-icon="icon: move"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="history-card"
-                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
-                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="history-card"
-                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
-                </div>
-              </div>
-            </div>
-            <div id="history-card" class="uk-card-body">
-              <div class="chart-container uk-panel uk-panel-scrollable">
-                <table class="uk-table uk-table-small uk-table-divider uk-table-responsive">
-                  <thead>
-                    <tr><th>Started</th><th>File</th><th>Result</th><th>Time</th><th></th></tr>
-                  </thead>
-                  <tbody id="historyList"></tbody>
-                </table>
-                <p id="historyEmpty" class="uk-text-small uk-text-muted uk-hidden">No plots yet.</p>
-              </div>
+        <section class="cs-panel" data-panel="history" style="--m-order:8">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-clock"/></svg>Plot history</h2>
+            <span class="panel-icons">
+              <a href="#" class="uk-icon-link updateHistory" title="Refresh the history" data-uk-tooltip data-uk-icon="icon: refresh"></a>
+              <a href="#" class="uk-icon-link clearHistory" title="Clear the history" data-uk-tooltip data-uk-icon="icon: trash"></a>
+            </span>
+          </header>
+          <div class="cs-pbody">
+            <div class="cs-scroll">
+              <table class="uk-table uk-table-small uk-table-divider uk-table-responsive">
+                <thead>
+                  <tr><th>Started</th><th>File</th><th>Result</th><th>Time</th><th></th></tr>
+                </thead>
+                <tbody id="historyList"></tbody>
+              </table>
+              <p id="historyEmpty" class="cs-note uk-hidden">No plots yet.</p>
             </div>
           </div>
-        </div>
+        </section>
         <!-- /History -->
 
       </div>
-      <footer class="uk-section uk-section-small">
-        <hr>
-        <p class="uk-text-small uk-text-center">Copyright 2021 - <a href="https://github.com/henrytriplette">Created by
-            Henry Triplette</a></p>
-      </footer>
-    </div>
-  </div>
-  <!-- /CONTENT -->
 
-  <!-- OFFCANVAS -->
-  <div id="offcanvas-nav" data-uk-offcanvas="flip: true; overlay: true">
-    <div class="uk-offcanvas-bar uk-offcanvas-bar-animation uk-offcanvas-slide">
-      <button class="uk-offcanvas-close uk-close uk-icon" type="button" data-uk-close></button>
-      <ul class="uk-nav uk-nav-default uk-nav-parent-icon" data-uk-nav>
-        <li class="uk-nav-header">ACTIONS</li>
-        <li><a href="#" class="action-tasmota-toggle actionTasmota"><span data-uk-icon="icon: bolt"
-              class="uk-margin-small-right"></span>Toggle Tasmota</a></li>
-        <li><a href="#" class="action-open-reboot" uk-toggle="target: #modal-reboot"><span data-uk-icon="icon: refresh"
-              class="uk-margin-small-right"></span>Reboot Pi</a></li>
-        <li><a href="#" class="action-open-poweroff" uk-toggle="target: #modal-poweroff"><span
-              data-uk-icon="icon: close" class="uk-margin-small-right"></span>Poweroff Pi</a></li>
-        <li><a href="#" class="actionOpenConfig"><span data-uk-icon="icon: settings"
-              class="uk-margin-small-right"></span>Edit Config File</a></li>
-      </ul>
-      <div class="left-content-box uk-margin-top">
-        <h5>Reports</h5>
-        <div>
-          <span class="uk-text-small">Print Progress</span>
-          <progress id="printProgressOffCanvas" class="uk-progress printProgress" value="0" max="100"></progress>
-          <span class="uk-text-small uk-text-muted">Selected File: <span id="selectedFilenameOffCanvas"
-              class="uk-text-success selectedFilename"></span></span>
-          <div class="uk-text-small uk-text-muted etaText"></div>
-        </div>
-        <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
-          <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
-                class="uk-margin-small-right"></span>Pause Print</a></li>
-          <li><a href="#" class="resumePlot uk-hidden"><span data-uk-icon="icon: play-circle"
-                class="uk-margin-small-right"></span>Resume Print</a></li>
-          <li><a href="#" class="uk-button-danger stopPlot"><span data-uk-icon="icon: close"
-                class="uk-margin-small-right"></span>Stop Print</a></li>
-        </ul>
+      <div class="cs-split" data-split="rw" role="separator" aria-orientation="vertical" aria-label="Width of the right column" tabindex="0"></div>
+
+      <div class="cs-col" data-col="right">
+
+        <!-- Settings -->
+        <section class="cs-panel" data-panel="settings" style="--m-order:3">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sliders"/></svg>Plotter settings</h2>
+          </header>
+          <div class="cs-pbody">
+            <form id="plotterData">
+              <fieldset class="uk-fieldset uk-grid-small" uk-grid>
+
+                <input id="fileName" name="file" type="hidden">
+
+                <div class="uk-width-1-2@s">
+                  <label class="uk-form-label" for="portList">COM Port</label>
+                  <div class="uk-margin-small">
+                    <div class="uk-grid uk-grid-small">
+                      <div class="uk-width-expand">
+                        <select id="portList" class="uk-select portList" name="port">
+                        </select>
+                      </div>
+                      <div class="uk-width-auto uk-text-right panel-icons">
+                        <a href="#" class="uk-icon-link updatePorts" title="Refresh Port List"
+                          data-uk-tooltip data-uk-icon="icon: refresh"></a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="uk-width-1-2@s">
+                  <label class="uk-form-label" for="device">Plotting Device</label>
+                  <div class="uk-margin-small">
+                    <select id="device" input="device" class="uk-select" name="device">
+                      <option value="hp7475a">HP 7475A</option>
+                      <option value="hp7440a">HP 7440A</option>
+                      <option value="hp7550">HP 7550</option>
+                      <option value="dxy">Roland DXY 1xxx</option>
+                      <option value="sketchmate">Roland Sketchmate</option>
+                      <option value="dmp_161">Houston Inst. DMP-161</option>
+                      <option value="designmate">Calcomp Designmate</option>
+                      <option value="artisan">Calcomp Artisan</option>
+                      <option value="mp4200">Graptech MP4200</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="uk-width-1-2@s">
+                  <label class="uk-form-label" for="baudRate">Baudrate</label>
+                  <div class="uk-margin-small">
+                    <div class="uk-grid uk-grid-small">
+                      <div class="uk-width-expand">
+                        <select id="baudRate" class="uk-select baudRate" name="baudrate">
+                          <option value="9600">9600</option>
+                          <option value="19200">19200</option>
+                          <option value="38400">38400</option>
+                          <option value="4800">4800</option>
+                          <option value="2400">2400</option>
+                          <option value="1200">1200</option>
+                        </select>
+                      </div>
+                      <div class="uk-width-auto uk-text-right panel-icons">
+                        <a href="#" class="uk-icon-link updateBaud" title="Auto detect baudrate"
+                          data-uk-tooltip data-uk-icon="icon: search"></a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="uk-width-1-2@s">
+                  <label class="uk-form-label" for="flowControl">Flow Control</label>
+                  <div class="uk-margin-small">
+                    <select id="flowControl" class="uk-select" name="flowControl">
+                      <option value="CTS/RTS">CTS/RTS</option>
+                      <option value="HP-IB">HP-IB</option>
+                      <option value="XON/XOFF">XON/XOFF</option>
+                      <option value="Software">Software flow ctrl.</option>
+                      <option value="None">None</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="uk-width-1-1">
+                  <label class="uk-form-label" for="penChange">Pen changes</label>
+                  <div class="uk-margin-small">
+                    <select id="penChange" class="uk-select" name="pen_change">
+                      <option value="auto">Automatic (pen carousel)</option>
+                      <option value="pause">Pause for a manual pen change</option>
+                    </select>
+                  </div>
+                </div>
+
+                <input id="plotPens" name="pens" type="hidden">
+                <div id="fileInfo" class="uk-width-1-1 uk-hidden">
+                  <div class="uk-alert uk-alert-primary uk-margin-remove">
+                    <p id="fileInfoText" class="uk-margin-remove uk-text-small"></p>
+                    <div id="penChoices" class="uk-margin-small-top uk-hidden">
+                      <span class="uk-text-small uk-text-muted">Plot these pens:</span>
+                      <div id="penChoiceList" class="uk-grid-small uk-child-width-auto uk-grid uk-margin-remove-top"></div>
+                    </div>
+                  </div>
+                </div>
+              </fieldset>
+            </form>
+
+            <div id="tasmota_control" class="uk-hidden">
+              <label class="uk-text-small"><input id="tasmota" class="uk-checkbox" type="checkbox" name="tasmota" form="plotterData" checked> Switch the plotter off when the plot is completed</label>
+            </div>
+
+            <div>
+              <a href="#" class="startPlot uk-button uk-button-primary uk-width-1-1 lock-edit" id="toggleChart">Start Plot</a>
+              <div class="uk-grid-small uk-margin-small-top uk-flex-middle" data-uk-grid>
+                <div class="uk-width-1-1 uk-width-expand@s">
+                  <a href="#" class="addToQueue uk-button uk-button-default uk-width-1-1">Add to queue</a>
+                </div>
+                <div class="uk-width-1-1 uk-width-auto@s">
+                  <label class="uk-text-small"><input id="queuePause" class="uk-checkbox" type="checkbox"> Paper change after</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <!-- /Settings -->
+
+        <!-- Plotter control -->
+        <section class="cs-panel" data-panel="control" style="--m-order:4">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-cross"/></svg>Plotter control</h2>
+          </header>
+          <div class="cs-pbody">
+            <p class="uk-text-small uk-text-muted">
+              Move the pen to line up the paper. Uses the port and settings chosen in Plotter Settings, and is
+              not available while plotting.</p>
+            <div class="uk-grid uk-grid-small" data-uk-grid>
+              <div class="uk-width-1-1">
+                <div class="uk-grid uk-grid-collapse uk-child-width-1-3 jog-pad">
+                  <div></div>
+                  <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="1"
+                      title="Up (away from you)" data-uk-icon="icon: arrow-up"></button></div>
+                  <div></div>
+                  <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="-1" data-dy="0"
+                      title="Left" data-uk-icon="icon: arrow-left"></button></div>
+                  <div><button class="uk-button uk-button-default uk-width-1-1 plotterAction lock-edit" data-action="origin"
+                      title="Go to the plotter's origin (0,0)" data-uk-icon="icon: home"></button></div>
+                  <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="1" data-dy="0"
+                      title="Right" data-uk-icon="icon: arrow-right"></button></div>
+                  <div></div>
+                  <div><button class="uk-button uk-button-default uk-width-1-1 jogButton lock-edit" data-dx="0" data-dy="-1"
+                      title="Down (towards you)" data-uk-icon="icon: arrow-down"></button></div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="uk-width-1-1">
+                <label class="uk-form-label" for="jogStep">Step</label>
+                <select id="jogStep" class="uk-select uk-margin-small-bottom">
+                  <option value="0.5">0.5 mm</option>
+                  <option value="1">1 mm</option>
+                  <option value="5" selected>5 mm</option>
+                  <option value="10">10 mm</option>
+                  <option value="50">50 mm</option>
+                </select>
+                <div class="uk-button-group uk-width-1-1 uk-margin-small-bottom">
+                  <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_up">Pen up</button>
+                  <button class="uk-button uk-button-default uk-width-1-2 plotterAction lock-edit" data-action="pen_down">Pen down</button>
+                </div>
+                <div class="uk-grid uk-grid-small" data-uk-grid>
+                  <div class="uk-width-expand">
+                    <select id="selectPen" class="uk-select" aria-label="Pen">
+                      <option value="0">Put pen away (0)</option>
+                      <option value="1" selected>Pen 1</option>
+                      <option value="2">Pen 2</option>
+                      <option value="3">Pen 3</option>
+                      <option value="4">Pen 4</option>
+                      <option value="5">Pen 5</option>
+                      <option value="6">Pen 6</option>
+                      <option value="7">Pen 7</option>
+                      <option value="8">Pen 8</option>
+                    </select>
+                  </div>
+                  <div class="uk-width-auto">
+                    <button class="uk-button uk-button-default selectPenButton lock-edit">Pick</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <hr>
+            <div class="uk-grid uk-grid-small uk-flex-middle" data-uk-grid>
+              <div class="uk-width-expand">
+                <button class="uk-button uk-button-default uk-width-1-1 traceBounds lock-edit"
+                  title="Move the lifted pen round the area the selected file will draw in">Trace plot area</button>
+              </div>
+              <div class="uk-width-auto">
+                <label class="uk-text-small"><input id="traceDraw" class="uk-checkbox" type="checkbox"> Draw it</label>
+              </div>
+            </div>
+            <div class="uk-grid uk-grid-small uk-flex-middle" data-uk-grid>
+              <div class="uk-width-auto">
+                <button class="uk-button uk-button-default plotterPosition lock-edit">Where is the pen?</button>
+              </div>
+              <div class="uk-width-expand uk-text-small uk-text-muted" id="penPosition"></div>
+            </div>
+          </div>
+        </section>
+        <!-- /Plotter control -->
+
+        <!-- Buffer -->
+        <section class="cs-panel" data-panel="buffer" style="--m-order:9">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chart"/></svg>Buffer space</h2>
+          </header>
+          <div class="cs-pbody">
+            <div id="chartContents" class="hidden">
+              <canvas id="chart"></canvas>
+            </div>
+            <p class="chart-idle cs-note">The free space in the plotter's buffer shows here while a plot runs with CTS/RTS or software flow control.</p>
+          </div>
+        </section>
+        <!-- /Buffer -->
+
+        <!-- System -->
+        <section class="cs-panel" data-panel="system" style="--m-order:10">
+          <header class="cs-phead">
+            <h2><svg class="ico" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-power"/></svg>System</h2>
+          </header>
+          <div class="cs-pbody">
+            <a href="#" class="uk-button uk-button-default uk-width-1-1 actionTasmota"><span data-uk-icon="icon: bolt" class="uk-margin-small-right"></span>Toggle Tasmota</a>
+            <a href="#" class="uk-button uk-button-default uk-width-1-1 actionOpenConfig"><span data-uk-icon="icon: settings" class="uk-margin-small-right"></span>Edit config file</a>
+            <div class="uk-grid-small uk-child-width-1-2" data-uk-grid>
+              <div><a href="#" class="uk-button uk-button-default uk-width-1-1" uk-toggle="target: #modal-reboot"><span data-uk-icon="icon: refresh" class="uk-margin-small-right"></span>Reboot Pi</a></div>
+              <div><a href="#" class="uk-button uk-button-danger uk-width-1-1" uk-toggle="target: #modal-poweroff"><span data-uk-icon="icon: sign-out" class="uk-margin-small-right"></span>Power off</a></div>
+            </div>
+          </div>
+        </section>
+        <!-- /System -->
+
       </div>
+    </main>
+    <script src="{{url_for('static', filename='layout.js')}}"></script>
+    <script src="{{url_for('static', filename='layout-ui.js')}}"></script>
 
-    </div>
   </div>
-  <!-- /OFFCANVAS -->
+
+  <!-- wait modal and the other dialogs follow -->
 
   <!-- File Conversion Modal -->
   <div id="modal-convertFile" uk-modal>
@@ -769,66 +664,6 @@
   </div>
   <!-- File Conversion Modal -->
 
-  <!-- File Preview Modal -->
-  <div id="modal-previewFile" uk-modal>
-    <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
-      <div class="uk-card-header mac-browser-bar">
-        <div class="uk-grid uk-grid-small">
-          <div class="uk-width-expand">
-            <h4>File Preview: <span id="previewFileName"></span></h4>
-          </div>
-          <div class="uk-width-auto uk-text-right panel-icons">
-            <a href="#" class="uk-icon-link mac-button mac-close uk-modal-close" title="Close" data-uk-tooltip
-              data-uk-icon="icon: close"></a>
-          </div>
-        </div>
-      </div>
-      <div class="uk-modal-body">
-        <canvas id="hpglCanvas" width="400" height="200"></canvas>
-        <div class="uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
-          <div class="uk-width-expand">
-            <span id="previewCoords" class="uk-text-small uk-text-muted"></span>
-          </div>
-          <div class="uk-width-auto">
-            <label class="uk-text-small uk-margin-small-right"><input id="previewTravel" class="uk-checkbox" type="checkbox"> Pen-up travel</label>
-            <button class="uk-button uk-button-default uk-button-small previewFit" type="button">Fit</button>
-          </div>
-        </div>
-        <div id="previewLegend" class="uk-margin-small-top uk-text-small"></div>
-        <button id="previewUsePens" class="uk-button uk-button-default uk-button-small uk-margin-small-top uk-hidden usePreviewPens"
-          type="button" title="Tick only the pens shown here in the plot settings">Plot only the pens shown</button>
-        <div id="previewReplayBar" class="uk-grid-small uk-flex-middle uk-margin-small-top uk-hidden" data-uk-grid>
-          <div class="uk-width-auto">
-            <button id="replayToggle" class="uk-button uk-button-default uk-button-small" type="button">Replay</button>
-          </div>
-          <div class="uk-width-auto">
-            <select id="replaySpeed" class="uk-select uk-form-small" title="Replay speed, times the plotter's pen speed">
-              <option value="1">x1</option>
-              <option value="10">x10</option>
-              <option value="60" selected>x60</option>
-              <option value="300">x300</option>
-              <option value="1000">x1000</option>
-            </select>
-          </div>
-          <div class="uk-width-expand">
-            <input id="replaySeek" class="uk-range" type="range" min="0" max="1000" value="0">
-          </div>
-          <div class="uk-width-auto"><span id="replayTime" class="uk-text-small"></span></div>
-        </div>
-        <p id="previewInfo" class="uk-text-small uk-text-muted uk-margin-small-top"></p>
-        <p id="previewSummary" class="uk-text-small uk-margin-remove-top"></p>
-        <div id="previewActions" class="uk-grid uk-grid-small uk-margin-small-top uk-hidden" data-uk-grid>
-          <div class="uk-width-1-2">
-            <button class="uk-button uk-button-default uk-width-1-1 backToConvert" type="button">Change options</button>
-          </div>
-          <div class="uk-width-1-2">
-            <button class="uk-button uk-button-primary uk-width-1-1 savePreview" type="button">Save as HPGL</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- File Preview Modal -->
 
   <!-- config modal -->
   <div id="modal-configFile" uk-modal>
@@ -1128,6 +963,8 @@
               <option value="dark">Dark page</option>
               <option value="auto">Follow the device</option>
             </select>
+            <button class="uk-button uk-button-default uk-button-small uk-margin-small-top resetLayout" type="button"
+              title="Put the panels back where they started">Reset the panel layout</button>
           </div>
           <div class="uk-text-right uk-margin-medium-top">
             <button class="uk-button uk-button-primary uk-width-1-1 saveConfig" type="button">Save
@@ -1336,7 +1173,7 @@
       });
 
       socket.on('bytes_written', function (msg, cb) {
-        jQuery('#bytes_written').html(jQuery('<div/>').text(msg.data).html());
+        setBytesWritten(msg.data);
         followPlot(msg.data);
         scrollLog();
       })
@@ -1399,7 +1236,7 @@
 
       // Display print progression
       socket.on('print_progress', function (msg, cb) {
-        jQuery('.printProgress').val(msg.data);
+        setProgress(msg.data);
       });
 
       // Lock file deletion on print start, unlock on stop
@@ -1480,10 +1317,7 @@
                 .attr('disabled', true)
                 .prop('checked', false);
             });
-            $('#vpype_check_boxes label').each(function() {
-              $(this)
-                .css('color', '#666');
-            });
+            $('#vpype_check_boxes label').css('opacity', 0.5);
                         
 
         } else {
@@ -1494,10 +1328,7 @@
                 .removeAttr('disabled')
                 .prop('checked', ($(this).attr('data-original') == 'true') ? true : false);
             });
-            $('#vpype_check_boxes label').each(function() {
-              $(this)
-                .css('color', '#dadada');
-            });        
+            $('#vpype_check_boxes label').css('opacity', '');
           }
       });
 
@@ -1659,11 +1490,8 @@
         queueAction('pause_after', { id: jQuery(this).data('id'), value: this.checked ? '1' : '' });
       });
 
-      // Closing the preview stops the replay and the live cursor
-      UIkit.util.on('#modal-previewFile', 'hidden', function () {
-        if (hpglViewer) hpglViewer.stopReplay();
-        watchingPlot = false;
-      });
+      // A panel was shown, hidden or folded: the preview may have to load, or stop its replay
+      jQuery(window).on('panelschanged', onPanelsChanged);
 
       jQuery('#themeChoice').val(WebPlotterTheme.stored()).on('change', function () {
         WebPlotterTheme.save(this.value);
@@ -1742,18 +1570,6 @@
       jQuery(document).on('click', '.clearHistory', function (e) {
         e.preventDefault();
         clearHistory();
-      });
-
-      // Hide Cards
-      jQuery(document).on('click', '.closeCard', function (e) {
-        e.preventDefault();
-        closeCard(jQuery(this));
-      });
-
-      // Show Cards
-      jQuery(document).on('click', '.showCard', function (e) {
-        e.preventDefault();
-        showCard(jQuery(this));
       });
 
       // Reboot Pi

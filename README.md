@@ -53,7 +53,7 @@ http://{{your Raspberry-Pi IP address}}:5000
 ```
 
 Optional:
-Configure options in *config.ini* using the web interface (settings icon, bottom of the sidebar). Everything in *config.ini* can be changed there:
+Configure options in *config.ini* using the web interface (the settings icon, top right). Everything in *config.ini* can be changed there:
 - Plotter name, default device, port, baud rate and flow control.
 - Telegram token and chat ID, a webhook URL and an MQTT broker for notifications, and which events to send.
 - Tasmota device IP, and how long to wait after switching the plotter on and before switching it off.
@@ -61,7 +61,7 @@ Configure options in *config.ini* using the web interface (settings icon, bottom
 - Backup and restore of the settings, history and files (bottom of the same dialog).
 - A login (see Security).
 
-The *Plot History* card lists recent plots with how they ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). It is kept in *history.db* next to *config.ini*, and an update keeps it.
+The *Plot History* panel lists recent plots with how they ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). It is kept in *history.db* next to *config.ini*, and an update keeps it.
 
 USB serial adapters are listed by their stable `/dev/serial/by-id/...` name, which does not change when the adapter is unplugged and plugged back in (unlike `/dev/ttyUSB0`). Prefer that entry for the default port. The Pi's own serial port (`/dev/ttyAMA0`) has no such name.
 
