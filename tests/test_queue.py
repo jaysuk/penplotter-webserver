@@ -21,6 +21,7 @@ def quick(app, uploads, monkeypatch):
     monkeypatch.setattr(app.send2serial, 'sendToPlotter', fake_send)
     monkeypatch.setattr(app.main, 'wait_seconds', lambda *args, **kwargs: None)
     monkeypatch.setattr(app.tasmota, 'tasmota_setStatus', lambda events, status: state['power'].append(status))
+    app.main.config.set('tasmota', 'tasmota_enable', 'true')       # the power commands are only used with Tasmota on
     for name in ('a.hpgl', 'b.hpgl', 'c.hpgl'):
         (uploads / name).write_text('IN;')
     return state

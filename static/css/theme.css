@@ -76,6 +76,30 @@
   color: #e0e0e0;
 }
 
+/* The buttons of a history row sit one above the other, so the card does not clip them */
+.history-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.history-actions .uk-button {
+  white-space: nowrap;
+}
+
+#historyList td:nth-child(1),
+#historyList td:nth-child(4) {
+  white-space: nowrap;
+}
+
+/* Never break a button label over two lines */
+.addToQueue,
+.deleteOldFiles,
+.clearCache {
+  white-space: nowrap;
+}
+
 /* Phones and small tablets */
 @media (max-width: 959px) {
   #content {

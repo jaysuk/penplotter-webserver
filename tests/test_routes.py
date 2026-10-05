@@ -607,3 +607,23 @@ def test_the_page_loads_the_theme(client):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assert os.path.isfile(os.path.join(root, 'static', 'css', 'theme.css'))
     assert os.path.isfile(os.path.join(root, 'static', 'theme.js'))
+
+
+def test_tasmota_delays_only_apply_when_tasmota_is_enabled(app, client, uploads, monkeypatch):
+    """The 'shut down when finished' box is ticked by default and sent even with Tasmota switched off."""
+    waits = []
+    monkeypatch.setattr(app.main, 'wait_seconds', lambda events, seconds, message, stoppable: waits.append(message))
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *args, **kwargs: True)
+    (uploads / 'a.hpgl').write_text('IN;')
+
+    assert client.post('/start_plot', data=dict(PLOT, tasmota='on')).data == b'Plot started'
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert waits == []                                               # no start-up wait, no wait before power off
+    assert client.post('/start_plot', data=PLOT).data == b'Plot started'    # and the lock is free at once
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+
+    client.post('/save_configfile', data={'tasmota_enable': 'true', 'tasmota_ip': '10.1.2.3'})
+    monkeypatch.setattr(app.tasmota, 'tasmota_setStatus', lambda *args, **kwargs: False)
+    assert client.post('/start_plot', data=dict(PLOT, tasmota='on')).data == b'Plot started'
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert len(waits) == 2 and 'start up' in waits[0] and 'switching it off' in waits[1]

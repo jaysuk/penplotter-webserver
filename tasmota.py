@@ -6,8 +6,11 @@ from config import config
 REQUEST_TIMEOUT = 5  # seconds
 
 
-def _enabled():
+def enabled():
     return config.get('tasmota', 'tasmota_enable', fallback='false').strip().lower() == 'true'
+
+
+_enabled = enabled
 
 
 def _ip():

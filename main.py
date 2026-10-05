@@ -361,6 +361,10 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     copy with the chosen pens), `resume_job` being the history entry it continues. Returns how it ended: 'completed', 'stopped' or 'failed'."""
     global current_plot
     events = PlotEvents()
+    # The "shut down when finished" box is ticked by default and the page sends it even when Tasmota
+    # is switched off in the settings: without a Tasmota there is nothing to wait for
+    if not tasmota.enabled():
+        poweroff = ''
     try:
         file_size = os.path.getsize(file)
     except OSError:
@@ -396,6 +400,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             analysis = hpgl_analysis.analyze(send_path)
             events.emit('status_log', {'data': 'Resuming from byte {} of the file.'.format(resume_start)})
         globals.cursor_ok = os.path.abspath(send_path) == os.path.abspath(file)
+        broadcast_plot_state()      # pages learn now that they can watch this plot
         if analysis is None and pen_change == 'pause':
             events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
         if analysis is not None:

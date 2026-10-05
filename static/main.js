@@ -376,7 +376,7 @@ const PREVIEW_HINT = "Scroll to zoom, drag to move, double-click to fit.";
 function buildLegend() {
   const legend = jQuery("#previewLegend").empty();
   const pens = hpglViewer.penList();
-  const canChoose = pens.length > 1 && /\.hpgl$/i.test(previewedFile || "") && !previewedConversion &&
+  const canChoose = pens.length > 1 && /\.hpgl$/i.test(previewedFile || "") && !previewedConversion && !watchingPlot &&
     jQuery("#fileName").val() === previewedFile && jQuery(".penChoice").length > 0;
   jQuery("#previewUsePens").toggleClass("uk-hidden", !canChoose);
   if (pens.length === 0) return;
@@ -1011,7 +1011,7 @@ function historyActions(job) {
     // Buffer flow control knows what the plotter had not drawn yet, the others do not
     const buffered = job.flow_control == "CTS/RTS" || job.flow_control == "Software";
     buttons +=
-      `<a href="#" class="uk-button uk-button-default uk-button-small uk-margin-small-right resumeJob" data-job="${id}" ` +
+      `<a href="#" class="uk-button uk-button-default uk-button-small resumeJob" data-job="${id}" ` +
       `data-buffered="${buffered ? 1 : 0}" title="Carry on from where this plot got to">Resume</a>`;
   }
   if (job.can_replot) {
@@ -1019,7 +1019,7 @@ function historyActions(job) {
       `<a href="#" class="uk-button uk-button-default uk-button-small replotJob" data-job="${id}" ` +
       `title="Plot this file again with the same settings">Plot again</a>`;
   }
-  return buttons;
+  return buttons ? `<div class="history-actions">${buttons}</div>` : "";
 }
 
 // Resume a stopped plot: the pen carriage and paper must not have moved, and the plotter may
@@ -1068,7 +1068,7 @@ function updateHistory() {
             `<td>${escapeHtml(job.file)}</td>` +
             `<td><span class="uk-label ${label}"${title}>${status}</span>${escapeHtml(percent)}</td>` +
             `<td>${escapeHtml(done)}</td>` +
-            `<td class="uk-text-nowrap">${historyActions(job)}</td></tr>`
+            `<td>${historyActions(job)}</td></tr>`
         );
       }
     })

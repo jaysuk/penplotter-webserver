@@ -100,3 +100,18 @@ def test_the_cursor_follows_only_a_plot_of_the_whole_file(app, client, uploads, 
     assert wait_for(lambda: app.globals.printing)
     assert app.main.plot_state()['cursor_ok'] is False       # a copy with one pen: offsets differ
     client.post('/stop_plot')
+
+
+def test_pages_are_told_when_a_plot_can_be_watched(app, client, uploads, slow_plot):
+    """cursor_ok is known only once the file to send is chosen, so the state is sent again then."""
+    (uploads / 'a.hpgl').write_bytes(b'IN;SP1;PU0,0;PD10,10;PU;SP0;')
+    watcher = app.main.socketio.test_client(app.main.app)
+    watcher.get_received()
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: app.globals.printing)
+
+    def states():
+        return [m['args'][0]['data'] for m in watcher.get_received() if m['name'] == 'plot_state']
+    seen = []
+    assert wait_for(lambda: seen.extend(states()) or any(s['cursor_ok'] for s in seen))
+    client.post('/stop_plot')
