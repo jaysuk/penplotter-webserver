@@ -11,7 +11,7 @@ on:
 
 jobs:
   Test_Pi_Install:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
@@ -33,7 +33,7 @@ jobs:
           cpu_info: cpuinfo/raspberrypi_zero2_w_arm64
           base_image: raspios_lite_arm64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: pguyot/arm-runner-action@HEAD
 
       with:
