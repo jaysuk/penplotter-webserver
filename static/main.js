@@ -304,6 +304,18 @@ function showPreview(title, url, conversion, watch, quiet) {
 // A file was selected in the list: show it, unless that would replace a conversion that is not saved yet
 function previewSelected(filename) {
   if (previewedConversion || !previewVisible()) return;
+  if (/\.cal$/i.test(filename)) {
+    // CalComp files are not HP-GL: there is nothing the viewer can draw
+    previewedFile = filename;
+    watchingPlot = false;
+    jQuery("#previewFileName").text(filename);
+    jQuery("#previewUnsaved, #previewActions").addClass("uk-hidden");
+    jQuery("#previewSummary").text("");
+    setPreviewDrawing(false);
+    jQuery("#previewInfo").text("No preview for .cal files");
+    updateWatchButton();
+    return;
+  }
   const watch = watchingPlot && filename === currentPlotFile;
   showPreview(filename, "/uploads/" + encodeURIComponent(filename), null, watch, true);
 }
@@ -725,7 +737,7 @@ function clearLog() {
 // The plot form as a query string, or null (after telling the user why) when it is not complete
 function plotFormData() {
   if (jQuery("#fileName").val() == "") {
-    notify("No *.hpgl file selected", "danger");
+    notify("No *.hpgl or *.cal file selected", "danger");
     return null;
   }
   if (jQuery("#portList").val() == null) {

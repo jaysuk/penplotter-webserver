@@ -44,7 +44,7 @@ plot_queue.init()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
-app.config['UPLOAD_EXTENSIONS'] = ['.svg', '.hpgl']
+app.config['UPLOAD_EXTENSIONS'] = ['.svg', '.hpgl', '.cal']
 app.config['UPLOAD_PATH'] = 'uploads'
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 
@@ -100,6 +100,8 @@ PDF_TOOL = 'pdftocairo'
 PDF_DIR = os.path.join('cache', 'pdf')
 PDF_TIMEOUT = 120
 HPGL_NAME_RE = re.compile(r'[A-Za-z0-9._-]+\.hpgl')
+# What can be plotted. A .cal file (CalComp) is sent as it is: no analysis, preview, pen choice or resume
+PLOT_EXTENSIONS = ('.hpgl', '.cal')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
@@ -361,6 +363,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     copy with the chosen pens), `resume_job` being the history entry it continues. Returns how it ended: 'completed', 'stopped' or 'failed'."""
     global current_plot
     events = PlotEvents()
+    cal = send2serial.is_cal(file)
     # The "shut down when finished" box is ticked by default and the page sends it even when Tasmota
     # is switched off in the settings: without a Tasmota there is nothing to wait for
     if not tasmota.enabled():
@@ -382,10 +385,15 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
         # on. A file that cannot be analysed still plots, just without a time left or pen change
         # pauses.
         send_path = file
-        try:
-            send_path, analysis, temporary = prepare_plot_file(events, file, analysis, pens)
-        except (OSError, ValueError) as e:
-            raise ValueError('Could not prepare the plot: ' + str(e))
+        if cal:
+            analysis = None     # not HP-GL: it is sent as it is
+            if pens or resume_from:
+                raise ValueError('Pens cannot be picked, and a plot cannot be resumed, in a .cal file')
+        else:
+            try:
+                send_path, analysis, temporary = prepare_plot_file(events, file, analysis, pens)
+            except (OSError, ValueError) as e:
+                raise ValueError('Could not prepare the plot: ' + str(e))
         if resume_from:
             # Carry on from there: the rest of the file, after what sets the plotter up again
             os.makedirs(PLOT_CACHE, exist_ok=True)
@@ -399,7 +407,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             send_path, temporary = resume_path, resume_path
             analysis = hpgl_analysis.analyze(send_path)
             events.emit('status_log', {'data': 'Resuming from byte {} of the file.'.format(resume_start)})
-        globals.cursor_ok = os.path.abspath(send_path) == os.path.abspath(file)
+        globals.cursor_ok = not cal and os.path.abspath(send_path) == os.path.abspath(file)
         broadcast_plot_state()      # pages learn now that they can watch this plot
         if analysis is None and pen_change == 'pause':
             events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
@@ -455,7 +463,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     finally:
         history.finish(job, outcome or 'failed', globals.plot_progress, error,
                        drawn_s=globals.drawn_seconds if outcome == 'completed' else None,
-                       resume_offset=resume_point(outcome, resume_start, resume_skip))
+                       resume_offset=None if cal else resume_point(outcome, resume_start, resume_skip))
         if resume_job is not None and (outcome == 'completed' or globals.sent_offset > 0):
             history.clear_resume(resume_job)       # carried on: the old plot is not resumable again
         if temporary:
@@ -534,7 +542,7 @@ def upload_files():
     if base and ext == '.pdf':
         return import_pdf(uploaded_file, base)
     if not base or ext not in app.config['UPLOAD_EXTENSIONS']:
-        return 'Only .svg and .hpgl files are accepted', 400
+        return 'Only .svg, .hpgl and .cal files are accepted', 400
     filename = base + ext
     if plot_lock.locked() and filename == current_plot:
         return 'This file is currently being plotted', 409
@@ -814,8 +822,9 @@ def plot_request(values):
     and the analysis that was needed to pick them."""
     name = values.get('file')
     path = upload_file_path(name)
-    if not path or not path.lower().endswith('.hpgl') or not os.path.isfile(path):
-        return None, ('Please select a valid .hpgl file', 400)
+    if not path or not path.lower().endswith(PLOT_EXTENSIONS) or not os.path.isfile(path):
+        return None, ('Please select a valid .hpgl or .cal file', 400)
+    cal = send2serial.is_cal(path)
 
     port = values.get('port') or ''
     if not PORT_RE.fullmatch(port):
@@ -826,13 +835,19 @@ def plot_request(values):
     flowControl = values.get('flowControl')
     if flowControl not in FLOW_CONTROLS:
         return None, ('Invalid flow control', 400)
+    if cal and flowControl.upper() not in send2serial.CAL_FLOW_CONTROLS:
+        return None, ('.cal files need XON/XOFF or no flow control', 400)
 
     pen_change = values.get('pen_change') or config_value('plotter', 'pen_change') or 'auto'
     if pen_change not in PEN_CHANGES:
         return None, ('Invalid pen change mode', 400)
+    if cal:
+        pen_change = 'auto'     # the pens are in the file (F1;...): there is nowhere to pause
     pens = None
     analysis = None
     pens_text = values.get('pens') or ''
+    if pens_text and cal:
+        return None, ('Pens cannot be picked in a .cal file', 400)
     if pens_text:
         if not PENS_RE.fullmatch(pens_text):
             return None, ('Invalid pens', 400)
@@ -917,7 +932,7 @@ MAX_REWIND = 1024 * 1024
 def can_resume(job):
     """Can this plot carry on? It was stopped or failed part way, and the file is still the one
     that was plotted."""
-    if job['status'] not in ('stopped', 'failed') or not job.get('resume_offset'):
+    if job['status'] not in ('stopped', 'failed') or not job.get('resume_offset') or send2serial.is_cal(job['file']):
         return False
     path = upload_file_path(job['file'])
     try:

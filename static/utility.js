@@ -51,7 +51,7 @@ function renderFileListElement(name, info) {
   const label = escapeHtml(name);
   const details = info ? `<span class="fmeta">${escapeHtml(info)}</span>` : '';
   const badge = ext ? escapeHtml(ext.toUpperCase().slice(0, 4)) : '?';
-  const link = ext === 'hpgl' ? 'selectFile' : 'no-selectFile';
+  const link = ext === 'hpgl' || ext === 'cal' ? 'selectFile' : 'no-selectFile';
   let actions = '';
 
   if (ext === 'hpgl') {

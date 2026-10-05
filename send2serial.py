@@ -195,6 +195,16 @@ def abort_plot(tty):
         print(repr(e))
 
 
+def is_cal(path):
+    """CalComp .cal files (R2; H; F1; Cx,y; K; I; ...) are not HP-GL: nothing HP-GL is sent with them."""
+    return str(path).lower().endswith('.cal')
+
+
+# A .cal plot is a plain stream: the plotter's own XON/XOFF handshake is the only flow control
+CAL_FLOW_CONTROLS = ('XON/XOFF', 'NONE')
+CAL_PEN_UP = b'H;'
+
+
 def run_commands(socketio, port, baud, flowControl, commands, query=None):
     """Send a few short commands to an idle plotter, such as moving the pen.
 
@@ -326,6 +336,11 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
     if flowControl.upper() == 'NONE':
         flowControl = 'NONE'
 
+    cal = is_cal(hpglfile)
+    if cal and flowControl not in CAL_FLOW_CONTROLS:
+        socketio.emit('error', {'data': '.cal files need XON/XOFF or no flow control'})
+        return False
+
     # Only plotters that can report their buffer size and free space support buffer based flow control
     use_buffer = flowControl not in ('HP-IB', 'XON/XOFF', 'NONE')
 
@@ -349,15 +364,17 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
         hpgl = open(hpglfile, 'rb')
 
-        tty = open_port(socketio, port, baud, flowControl)
+        # A CalComp plotter would not understand the HP-GL set-up or the identification query
+        tty = open_port(socketio, port, baud, flowControl, init=not cal)
         if tty is None:
             return False
 
-        try:
-            plotter_id = getReplySTR(tty, b'IN;OI;')
-            socketio.emit('status_log', {'data': 'Plotter identifies as ' + plotter_id})
-        except HPGLError as e:
-            socketio.emit('status_log', {'data': 'Plotter did not reply, sending plot anyway!'})
+        if not cal:
+            try:
+                plotter_id = getReplySTR(tty, b'IN;OI;')
+                socketio.emit('status_log', {'data': 'Plotter identifies as ' + plotter_id})
+            except HPGLError as e:
+                socketio.emit('status_log', {'data': 'Plotter did not reply, sending plot anyway!'})
 
         print('Configured for ', flowControl, ' flow control.')
         socketio.emit('status_log', {'data': 'Configured for ' + str(flowControl) + ' flow control.'})
@@ -404,7 +421,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
             socketio.emit('status_log', {'data': 'Size of plotter buffer is ' + str(bufsz) + ' bytes.'})
             socketio.emit('buffer_size', {'data': str(bufsz)})
 
-        globals.current_file = hpglfile.replace('uploads/', '').replace('.hpgl', '')
+        globals.current_file = hpglfile.replace('uploads/', '')
+        globals.current_file = globals.current_file[:-4] if cal else globals.current_file.replace('.hpgl', '')
         globals.start_stamp = time.time()
         notification.send('start', notify_name + ': ' + globals.current_file + ': Starting', file=globals.current_file)
 
@@ -544,6 +562,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
             except PORT_ERRORS as e:
                 if not globals.printing:
                     break
+                if cal:
+                    # The state of the plotter (pen, stall, speed) cannot be put back from here
+                    socketio.emit('error', {'data': 'Lost the connection to the plotter: ' + str(e)})
+                    return False
                 lost_at = time.time()
                 if use_buffer:
                     unprocessed = (bufsz - bufsp) + last_len
@@ -568,6 +590,11 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
             # The plot was stopped from the UI
             if use_buffer and tty is not None:
                 abort_plot(tty)
+            elif cal and tty is not None:
+                try:
+                    tty.write(CAL_PEN_UP)   # queued behind what the plotter has buffered
+                except PORT_ERRORS as e:
+                    print(repr(e))
             globals.current_file = 'None'
             globals.start_stamp = 0
             socketio.emit('status_log', {'data': '*** Plot stopped.'})

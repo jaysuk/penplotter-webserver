@@ -111,7 +111,7 @@ def test_the_page_offers_pdfs_only_when_they_can_be_read(app, client, monkeypatc
     monkeypatch.setattr(app.main.shutil, 'which', lambda name: None)
     assert ".pdf" not in client.get('/').get_data(as_text=True).split('acceptedFiles')[1][:40]
     monkeypatch.setattr(app.main.shutil, 'which', lambda name: '/usr/bin/pdftocairo')
-    assert '.svg,.hpgl,.pdf' in client.get('/').get_data(as_text=True)
+    assert '.svg,.hpgl,.cal,.pdf' in client.get('/').get_data(as_text=True)
 
 
 def test_other_extensions_are_still_refused(client, uploads, poppler):

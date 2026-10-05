@@ -19,12 +19,12 @@ MANIFEST = 'manifest.json'
 CONFIG = 'config.ini'
 DATABASE = 'history.db'
 
-UPLOAD_NAME_RE = re.compile(r'uploads/([A-Za-z0-9._-]{1,200}\.(?:svg|hpgl))', re.IGNORECASE)
+UPLOAD_NAME_RE = re.compile(r'uploads/([A-Za-z0-9._-]{1,200}\.(?:svg|hpgl|cal))', re.IGNORECASE)
 MAX_MEMBERS = 5000
 MAX_MEMBER_BYTES = 200 * 1024 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 MAX_CONFIG_BYTES = 1024 * 1024
-UPLOAD_EXTENSIONS = ('.svg', '.hpgl')
+UPLOAD_EXTENSIONS = ('.svg', '.hpgl', '.cal')
 
 
 class BackupError(ValueError):

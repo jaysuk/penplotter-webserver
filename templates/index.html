@@ -1258,7 +1258,7 @@
       updatePorts().then(updateConfiguration);
 
       // Create uploader
-      const uploadFiles = new Dropzone("#uploadFiles", { acceptedFiles: '.svg,.hpgl{% if pdf_import %},.pdf{% endif %}', maxFilesize: 200 });
+      const uploadFiles = new Dropzone("#uploadFiles", { acceptedFiles: '.svg,.hpgl,.cal{% if pdf_import %},.pdf{% endif %}', maxFilesize: 200 });
       uploadFiles.on("complete", function (file) {
         updateFiles(); // Update file list on upload completed
       });
