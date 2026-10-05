@@ -198,23 +198,54 @@ var hpglViewer = null;
 
 function previewFile(element) {
   const filename = jQuery(element).attr("data-filename");
+  showPreview(filename, "/uploads/" + encodeURIComponent(filename), null);
+}
 
-  jQuery("#previewFileName").text(filename);
+// Show a drawing in the preview dialog. `conversion` is {name, summary} for a conversion that has
+// not been saved yet (it can be saved or abandoned from the dialog), null for a file in the list.
+var previewedConversion = null;
+
+function showPreview(title, url, conversion) {
+  previewedConversion = conversion;
+  jQuery("#previewFileName").text(title);
   jQuery("#previewInfo").text("Loading...");
+  jQuery("#previewSummary").text(conversion ? describeSummary(conversion.summary) : "");
+  jQuery("#previewActions").toggleClass("uk-hidden", !conversion);
 
-  // The canvas is sized from its container, which only has a width once the modal is visible
-  UIkit.util.once("#modal-previewFile", "shown", function () {
-    loadPreview(filename);
-  });
-  UIkit.modal("#modal-previewFile").show();
+  const open = function () {
+    // The canvas is sized from its container, which only has a width once the modal is visible
+    UIkit.util.once("#modal-previewFile", "shown", function () {
+      loadPreview(url);
+    });
+    UIkit.modal("#modal-previewFile").show();
+  };
+  // A dialog that is still closing would swallow the new one
+  const convertModal = UIkit.modal("#modal-convertFile");
+  if (convertModal.isToggled()) {
+    UIkit.util.once("#modal-convertFile", "hidden", open);
+    convertModal.hide();
+  } else {
+    open();
+  }
+}
+
+function describeSummary(summary) {
+  if (!summary) return "";
+  const drawn = summary.draw_mm / 1000;
+  const travel = summary.travel_mm / 1000;
+  const share = drawn > 0 ? Math.round((100 * travel) / drawn) : 0;
+  return (
+    "About " + formatDuration(summary.seconds) + " to plot. Drawing " + drawn.toFixed(1) +
+    " m, pen-up travel " + travel.toFixed(1) + " m (" + share + "% of the drawing)."
+  );
 }
 
 // Preview files bigger than this would freeze a phone while parsing
 const PREVIEW_MAX_BYTES = 30 * 1024 * 1024;
 
-function loadPreview(filename) {
+function loadPreview(url) {
   axios
-    .get("/uploads/" + encodeURIComponent(filename), {
+    .get(url, {
       responseType: "text",
       transformResponse: [(data) => data], // keep the raw text, don't try to parse JSON
       params: { _: Date.now() }, // always show the latest version of a re-converted file
@@ -261,6 +292,56 @@ function convertFileModal(element) {
   const filename = jQuery(element).attr("data-filename");
   jQuery("#convertFile").val(filename);
   UIkit.modal("#modal-convertFile").show();
+}
+
+// Convert without keeping the result, and show it
+function previewConversion() {
+  if (jQuery("#convertFile").val() == "") {
+    notify("No *.svg file selected", "danger");
+    return false;
+  }
+
+  jQuery("#loader").removeClass("uk-hidden");
+
+  axios
+    .post("/preview_conversion", jQuery("#convertData").serialize())
+    .then(function (response) {
+      const name = response.data.name;
+      showPreview(name, "/preview_files/" + encodeURIComponent(name), response.data);
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    })
+    .then(function () {
+      jQuery("#loader").addClass("uk-hidden");
+    });
+}
+
+// Keep the previewed conversion
+function savePreview() {
+  if (!previewedConversion) return;
+  axios
+    .post("/save_preview", new URLSearchParams({ name: previewedConversion.name }).toString())
+    .then(function (response) {
+      notify(response.data, "success");
+      previewedConversion = null;
+      updateFiles();
+      UIkit.modal("#modal-previewFile").hide();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
+}
+
+// Back from the preview to the conversion options
+function backToConvert() {
+  const preview = UIkit.modal("#modal-previewFile");
+  UIkit.util.once("#modal-previewFile", "hidden", function () {
+    UIkit.modal("#modal-convertFile").show();
+  });
+  preview.hide();
 }
 
 // Start conversion

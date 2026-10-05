@@ -681,8 +681,16 @@
           </div>
           </div>
         </form>
-        <button class="uk-button uk-button-primary uk-width-1-1 startConversion lock-edit"
-          type="button" style="margin-top:20px;">Convert</button>
+        <div class="uk-grid uk-grid-small" data-uk-grid style="margin-top:20px;">
+          <div class="uk-width-1-2">
+            <button class="uk-button uk-button-default uk-width-1-1 startPreview" type="button"
+              title="Convert and look at the result before saving it">Preview</button>
+          </div>
+          <div class="uk-width-1-2">
+            <button class="uk-button uk-button-primary uk-width-1-1 startConversion lock-edit"
+              type="button">Convert</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -705,6 +713,15 @@
       <div class="uk-modal-body">
         <canvas id="hpglCanvas" width="400" height="200"></canvas>
         <p id="previewInfo" class="uk-text-small uk-text-muted uk-margin-small-top"></p>
+        <p id="previewSummary" class="uk-text-small uk-margin-remove-top"></p>
+        <div id="previewActions" class="uk-grid uk-grid-small uk-margin-small-top uk-hidden" data-uk-grid>
+          <div class="uk-width-1-2">
+            <button class="uk-button uk-button-default uk-width-1-1 backToConvert" type="button">Change options</button>
+          </div>
+          <div class="uk-width-1-2">
+            <button class="uk-button uk-button-primary uk-width-1-1 savePreview" type="button">Save as HPGL</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1148,6 +1165,22 @@
           }
       });
 
+
+      // Preview a conversion, keep it, or go back to the options
+      jQuery(document).on('click', '.startPreview', function (e) {
+        e.preventDefault();
+        previewConversion();
+      });
+
+      jQuery(document).on('click', '.savePreview', function (e) {
+        e.preventDefault();
+        savePreview();
+      });
+
+      jQuery(document).on('click', '.backToConvert', function (e) {
+        e.preventDefault();
+        backToConvert();
+      });
 
       // Start conversion
       jQuery(document).on('click', '.startConversion', function (e) {

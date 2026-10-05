@@ -40,9 +40,18 @@ def env(tmp_path_factory):
 
     def convert_file(*args, **kwargs):
         stub.calls.append((args, kwargs))
-        return 'Exported ' + args[0]
+        if kwargs.get('output') and not stub.fail:
+            with open(kwargs['output'], 'wb') as f:
+                f.write(stub.hpgl)
+        return 'Exported ' + (kwargs.get('output') or args[0])
 
+    def output_name(file, *args, **kwargs):
+        return os.path.splitext(file)[0] + '-converted.hpgl'
+
+    stub.fail = False
+    stub.hpgl = b'IN;SP1;PU400,800;PD2400,800,2400,2800;PU;SP2;PU0,0;PD400,400;PU;SP0;'
     stub.convert_file = convert_file
+    stub.output_name = output_name
     sys.modules['convert_vpype'] = stub
 
     import main
@@ -77,6 +86,7 @@ def app(env):
     for entry in uploads.iterdir():
         entry.unlink()
     env.convert_stub.calls.clear()
+    env.convert_stub.fail = False
     env.serial.reset()
     env.globals.initialize()
     env.history.DB_PATH = 'history.db'

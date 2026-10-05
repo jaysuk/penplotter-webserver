@@ -25,7 +25,7 @@ import notification
 import plotter_control
 import send2serial
 import tasmota
-from convert_vpype import convert_file
+from convert_vpype import convert_file, output_name
 from config import config
 # import RPi.GPIO as GPIO
 
@@ -80,6 +80,10 @@ config_lock = threading.Lock()
 
 # Copies of plots with only some of the pens, kept just for the time they are plotted
 PLOT_CACHE = os.path.join('cache', 'plots')
+# Conversions that were previewed but not saved yet
+PREVIEW_DIR = os.path.join('cache', 'preview')
+PREVIEW_MAX_AGE = 24 * 3600
+HPGL_NAME_RE = re.compile(r'[A-Za-z0-9._-]+\.hpgl')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
@@ -685,6 +689,91 @@ def start_conversion():
         return 'File not converted.'
 
     return output
+
+def remove_old_previews():
+    """Previews that were never saved are only kept for a day."""
+    try:
+        names = os.listdir(PREVIEW_DIR)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(PREVIEW_DIR, name)
+        try:
+            if time.time() - os.path.getmtime(path) > PREVIEW_MAX_AGE:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def preview_path(name):
+    """The path of a previewed conversion, or None if `name` is not one."""
+    if not isinstance(name, str) or not HPGL_NAME_RE.fullmatch(name):
+        return None
+    path = os.path.join(PREVIEW_DIR, name)
+    return path if os.path.isfile(path) else None
+
+
+# Convert into the preview folder (not uploads/) so the result can be looked at before it is kept
+@app.route('/preview_conversion', methods=['POST'])
+def preview_conversion():
+    name = request.form.get('file')
+    file = upload_file_path(name)
+    if not file or not file.lower().endswith('.svg') or not os.path.isfile(file):
+        return 'Please select a valid .svg file', 400
+    options, error = conversion_options(request.form)
+    if error:
+        return error, 400
+
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    remove_old_previews()
+    result_name = os.path.basename(output_name(
+        file, options['outputsize'], options['pageorientation'], options['device'], options['custom_comand'],
+        options['linemerge'], options['linesort'], options['linesimplify'], options['reloop'],
+        options['margin'], options['rotate'], options['mirror_x'], options['mirror_y']))
+    path = os.path.join(PREVIEW_DIR, result_name)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+        run_conversion(file, options, output=path)
+    except (Exception, SystemExit) as e:
+        traceback.print_exc()
+        socketio.emit('error', {'data': 'Conversion failed: ' + repr(e)})
+    if not os.path.isfile(path):
+        return 'File not converted.', 422
+
+    try:
+        summary = hpgl_analysis.summary(hpgl_analysis.analyze_cached(path), history.correction())
+    except OSError:
+        summary = None
+    return jsonify({'name': result_name, 'summary': summary})
+
+
+@app.route('/preview_files/<name>')
+def preview_file(name):
+    if preview_path(name) is None:
+        return 'No such preview', 404
+    response = send_from_directory(os.path.join(BASE_DIR, PREVIEW_DIR), name)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+# Keep a previewed conversion: it moves into uploads/ under the name it would have got
+@app.route('/save_preview', methods=['POST'])
+def save_preview():
+    name = request.form.get('name')
+    path = preview_path(name)
+    if path is None:
+        return 'That preview is no longer available. Preview it again.', 404
+    if plot_lock.locked() and name == current_plot:
+        return 'This file is currently being plotted', 409
+    target = os.path.join(app.config['UPLOAD_PATH'], name)
+    try:
+        os.replace(path, target)
+    except OSError as e:
+        return 'Could not save the file: ' + str(e), 500
+    socketio.emit('status_log', {'data': 'File converted.'})
+    return 'Exported ' + app.config['UPLOAD_PATH'] + '/' + name
+
 
 def power_action(command):
     """Run reboot/poweroff through passwordless sudo once the response has been sent.
