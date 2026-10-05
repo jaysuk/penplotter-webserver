@@ -38,4 +38,5 @@ Open:
 - [x] A dropped serial connection holds the plot and offers to reconnect and continue (untested on hardware)
 - [x] Notifications: per-event toggles, progress every N percent, webhook and MQTT, a test button
 - [x] Storage: disk space, file sizes and ages, delete files older than N days, clear the cache
+- [x] Backup and restore (settings, history, presets, queue and optionally the uploaded files)
 - [ ] More plotter options?

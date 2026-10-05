@@ -58,6 +58,7 @@ Configure options in *config.ini* using the web interface (settings icon, bottom
 - Telegram token and chat ID, a webhook URL and an MQTT broker for notifications, and which events to send.
 - Tasmota device IP, and how long to wait after switching the plotter on and before switching it off.
 - Timelapse settings (stored, but not used by this version yet).
+- Backup and restore of the settings, history and files (bottom of the same dialog).
 - A login (see Security).
 
 The *Plot History* card lists recent plots with how they ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). It is kept in *history.db* next to *config.ini*, and an update keeps it.

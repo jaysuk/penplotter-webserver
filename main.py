@@ -4,10 +4,13 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import traceback
+import zipfile
 from urllib.parse import urlparse
 
 # The compiled modules (config, send2serial, convert_vpype) use paths relative to
@@ -19,6 +22,7 @@ from flask import Flask, Response, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 
+import backup
 import globals
 import history
 import hpgl_analysis
@@ -1397,6 +1401,25 @@ CONFIG_DEFAULTS = {'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_s
 # Never sent back to the browser: an empty password in a save means "keep the current one"
 WRITE_ONLY_FIELDS = {'auth_password', 'mqtt_password'}
 
+def store_config(updates):
+    """Set {(section, option): value} in the live config and write config.ini. The caller holds
+    config_lock."""
+    for (section, option), value in updates.items():
+        if not config.has_section(section):
+            config.add_section(section)
+        # '%' must be escaped because of configparser interpolation
+        config[section][option] = value.replace('%', '%%')
+
+    # Write atomically so a crash can't leave a truncated config.ini
+    with open('config.ini.tmp', 'w') as configfile:
+        config.write(configfile)
+    try:
+        os.chmod('config.ini.tmp', 0o600)
+    except OSError:
+        pass
+    os.replace('config.ini.tmp', 'config.ini')
+
+
 # Update configfile values
 @app.route('/save_configfile', methods=['GET', 'POST'])
 def save_configfile():
@@ -1428,20 +1451,7 @@ def save_configfile():
                     if config.has_section('auth'):
                         config.remove_section('auth')
 
-            for (section, option), value in updates.items():
-                if not config.has_section(section):
-                    config.add_section(section)
-                # '%' must be escaped because of configparser interpolation
-                config[section][option] = value.replace('%', '%%')
-
-            # Write atomically so a crash can't leave a truncated config.ini
-            with open('config.ini.tmp', 'w') as configfile:
-                config.write(configfile)
-            try:
-                os.chmod('config.ini.tmp', 0o600)
-            except OSError:
-                pass
-            os.replace('config.ini.tmp', 'config.ini')
+            store_config(updates)
 
         return 'Configuration Updated'
 
@@ -1451,6 +1461,128 @@ def save_configfile():
     output['auth_password_set'] = bool(config_value('auth', 'password'))
     output['mqtt_password_set'] = bool(config_value('notifications', 'mqtt_password'))
     return jsonify(output)
+
+# ////////////////////////////////////////////////////////////////////////////
+# Backup and restore
+
+# A zip of the settings, the history (with the presets and the queue) and, if asked for, the uploads.
+# It holds the passwords that are in config.ini: keep it somewhere private.
+@app.route('/backup', methods=['GET'])
+def download_backup():
+    handle, path = tempfile.mkstemp(suffix='.zip')
+    os.close(handle)
+    try:
+        uploads = app.config['UPLOAD_PATH'] if request.args.get('uploads') == '1' else None
+        backup.create(path, 'config.ini', history.database, uploads)
+        size = os.path.getsize(path)
+    except Exception:
+        os.remove(path)
+        raise
+
+    def stream():
+        # Removing the file here, not in a close callback: this runs when the download ends or is dropped
+        try:
+            with open(path, 'rb') as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    return Response(stream(), mimetype='application/zip', headers={
+        'Content-Length': str(size),
+        'Content-Disposition': time.strftime('attachment; filename="webplotter-backup-%Y%m%d-%H%M.zip"')})
+
+
+def config_from_backup(archive):
+    """The settings of a backup as {(section, option): value}, each checked like a save from the
+    page. Settings that are not in CONFIG_FIELDS are ignored. Raises BackupError."""
+    parser = backup.read_config(archive)
+    updates = {}
+    for field, (section, option, is_valid) in CONFIG_FIELDS.items():
+        if not parser.has_option(section, option):
+            continue
+        try:
+            value = parser.get(section, option)
+        except configparser.InterpolationError:
+            value = parser.get(section, option, raw=True)
+        if field not in WRITE_ONLY_FIELDS:
+            value = value.strip()
+        if field in WRITE_ONLY_FIELDS and value == '':
+            continue
+        if not is_valid(value):
+            raise backup.BackupError('The backup has an invalid value for {}'.format(field))
+        updates[(section, option)] = value
+    # A login needs both parts. A backup without one does not switch the current one off.
+    if not (updates.get(('auth', 'username')) and updates.get(('auth', 'password'))):
+        updates.pop(('auth', 'username'), None)
+        updates.pop(('auth', 'password'), None)
+    return updates
+
+
+# Put a backup back. Everything is checked first; then the settings, the history and the files
+# that are in the zip replace the current ones (files with other names are kept).
+@app.route('/restore', methods=['POST'])
+def restore_backup():
+    upload = request.files.get('backup')
+    if upload is None:
+        return 'No file received', 400
+    if globals.queue_active or not plot_lock.acquire(blocking=False):
+        return 'A backup cannot be restored while plotting', 409
+    folder = tempfile.mkdtemp()
+    try:
+        zip_path = os.path.join(folder, 'backup.zip')
+        upload.save(zip_path)
+        try:
+            archive = zipfile.ZipFile(zip_path)
+        except zipfile.BadZipFile:
+            return 'That is not a zip file', 400
+        with archive:
+            try:
+                members = backup.inspect(archive)
+                updates = config_from_backup(archive) if backup.CONFIG in members else {}
+                database = backup.extract_database(archive, folder) if backup.DATABASE in members else None
+            except backup.BackupError as e:
+                return str(e), 400
+
+            restored = {'config': len(updates), 'history': False, 'uploads': 0}
+            if updates:
+                with config_lock:
+                    store_config(updates)
+            if database:
+                source = sqlite3.connect(database)
+                try:
+                    with history.database() as conn:
+                        source.backup(conn)
+                finally:
+                    source.close()
+                # A backup from an older version may lack newer columns and tables
+                history.init()
+                plot_queue.init()
+                presets.init()
+                restored['history'] = True
+            for name in sorted(members):
+                match = backup.UPLOAD_NAME_RE.fullmatch(name)
+                path = match and upload_file_path(match.group(1))
+                if path:
+                    backup.extract_upload(archive, name, path)
+                    restored['uploads'] += 1
+        socketio.emit('status_log', {'data': 'Restored a backup: {} settings, {}, {} files'.format(
+            restored['config'], 'the history' if restored['history'] else 'no history', restored['uploads'])})
+        broadcast_queue()
+        return jsonify(restored)
+    except (OSError, sqlite3.Error) as e:
+        traceback.print_exc()
+        return 'The backup could not be restored: ' + type(e).__name__, 500
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+        plot_lock.release()
+
 
 # Send a test message to every notification channel that is set up
 @app.route('/action_test_notification', methods=['POST'])

@@ -1124,6 +1124,16 @@
               Configuration</button>
           </div>
         </form>
+
+        <hr>
+        <h5 class="uk-margin-remove">Backup</h5>
+        <p class="uk-text-small uk-text-muted uk-margin-remove">A zip with the settings, the plot history, the presets and the queue. It includes the passwords in config.ini, so keep it private.</p>
+        <label class="uk-text-small"><input id="backupUploads" class="uk-checkbox" type="checkbox"> Include the uploaded files</label>
+        <button class="uk-button uk-button-default uk-button-small uk-margin-small-left downloadBackup" type="button">Download backup</button>
+        <div class="uk-margin-small-top">
+          <input id="restoreFile" type="file" accept=".zip,application/zip">
+          <button class="uk-button uk-button-default uk-button-small restoreBackup" type="button">Restore</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1643,6 +1653,16 @@
       UIkit.util.on('#modal-previewFile', 'hidden', function () {
         if (hpglViewer) hpglViewer.stopReplay();
         watchingPlot = false;
+      });
+
+      jQuery(document).on('click', '.downloadBackup', function (e) {
+        e.preventDefault();
+        window.location = '/backup' + (jQuery('#backupUploads').is(':checked') ? '?uploads=1' : '');
+      });
+
+      jQuery(document).on('click', '.restoreBackup', function (e) {
+        e.preventDefault();
+        restoreBackup();
       });
 
       jQuery(document).on('click', '.testNotification', function (e) {

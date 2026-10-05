@@ -1175,6 +1175,34 @@ const NOTIFICATION_FIELDS = [
   "webhook_url", "mqtt_host", "mqtt_port", "mqtt_topic", "mqtt_username",
 ];
 
+// Put a backup zip back
+function restoreBackup() {
+  const file = jQuery("#restoreFile")[0].files[0];
+  if (!file) {
+    notify("Choose a backup file first", "danger");
+    return;
+  }
+  UIkit.modal.confirm("Restore " + file.name + "? Its settings, history and files replace the current ones.").then(function () {
+    const form = new FormData();
+    form.append("backup", file);
+    axios
+      .post("/restore", form)
+      .then(function (response) {
+        const r = response.data;
+        notify("Restored " + r.config + " settings" + (r.history ? ", the history" : "") + ", " + r.uploads + " files", "success");
+        jQuery("#restoreFile").val("");
+        updateFiles();
+        updateHistory();
+        updateQueue();
+        updatePresets();
+        updateConfiguration();
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+      });
+  }, function () {});
+}
+
 function testNotification() {
   axios
     .post("/action_test_notification")
