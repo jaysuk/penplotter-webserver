@@ -24,7 +24,7 @@ Open:
 
 - [ ] Tasmota power off is a delay, not a check that the plotter is idle. I found no documented HP-GL
       query that reliably says "finished drawing", so this needs real hardware to improve on.
-- [ ] Stop (`ESC.K` + `PU;`) and pause have not been tried on real hardware.
+- [ ] Stop (`ESC.K` + `PU;`) and pause have not been tried on a real plotter. They work against a simulated one on a real serial port (`tests/pi_serial_check.py`).
 - [ ] Timelapse: the settings exist in config.ini (and the UI) and there is a `/timelapse/<file>`
       route, but nothing records anything. Implement it or remove it.
 - [ ] Page size filter per plotter (stub `updatePageSize` in main.js, not used). The convert dialog

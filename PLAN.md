@@ -3,9 +3,8 @@
 Written for the project owner. It covers items 11 to 20 of the outstanding list. The earlier plan
 (phases 0 to 4, all built) is in git history: `git show 7a38cfe:PLAN.md`.
 
-Items 1 to 10 of that list (everything that needs a plotter, or a look at the pages in a browser) are
-not planned here. Items 1 to 6 wait for hardware. Items 7 to 10 can be done on a Pi without a plotter:
-see "Pi session" at the end, which also feeds items 16 and 19.
+Items 1 to 6 of that list need a plotter. Items 7 to 10 (the pages in a browser, PDF import) were done on
+a Pi on 2026-10-05: see "Pi session: results" at the end, which also changed items 16, 17a and 19 below.
 
 ## Found while writing this plan (do first)
 
@@ -98,16 +97,16 @@ Each is S to M plus an experimental label until tried on a plotter.
 3. Re-run the Zero_W job and read the apt exit code 100 from 4954213 (it may be a transient mirror error, or `poppler-utils` failing). `install.sh` is supposed to treat poppler as non-fatal; confirm that.
 4. Make sure the new dependency `paho-mqtt` installs on the 32-bit image (pure Python, so it should) and that `import paho.mqtt.publish` works there. Add that import to the workflow's smoke test as a non-fatal warning, like other optional pieces.
 5. Add a workflow step that checks `requirements.txt` against the imports in the app (every third-party import has a line), so a missing dependency fails CI instead of a user's Pi.
-6. **Real install on your Pi (Pi session):** run the update path over the existing install, check `uploads/`, `config.ini`, `history.db` survive, and that the service restarts on the new code.
+6. ~~Real install on your Pi~~ **Done by you at 13:18 on 2026-10-05:** the update path ran on the Pi Zero 2 W (Trixie 64-bit, Python 3.13), `paho-mqtt` 2.1.0 installed from piwheels, `poppler-utils` was present, the service restarted on 7a38cfe and `uploads/`, `config.ini` and `history.db` were intact. So the installer works on real hardware; only the CI job is broken (steps 1 to 3).
 
-**Needs from you:** nothing, except permission to update the Pi in step 6.
+**Needs from you:** nothing.
 
 ## 17. Phase 0 leftovers
 
-### 17a. Conversion in its own process (L, needs the Pi)
-**Why:** `convert_file` runs vpype inside the request thread. vpype is CPU-bound Python, so it holds the GIL and can starve the serial loop during a plot (stalled CTS/RTS polling, a late Stop).
-**Measure first (Pi session):** convert a large svg while a simulated plot runs (see "Simulated plotter") and log the serial loop's worst gap between writes. Only build this if the gap is real; if it is under about 50 ms it is not worth it.
-**Plan if needed:** run the conversion in a child process (`subprocess` running a small entry point in `convert_vpype.py`, or `multiprocessing` with spawn), at low priority (`nice 10`), with a timeout and a kill on cancel. Progress and the result come back as `status_log` events; a `conversion_done` event replaces waiting on the HTTP response; one conversion at a time (second request gets 409). Keep the old in-process path for tests. The preview route uses the same runner.
+### 17a. Conversion in its own process (M, low priority)
+**Why:** `convert_file` runs vpype inside the request thread. vpype is CPU-bound Python, so it holds the GIL.
+**Measured on a Pi Zero 2 W (2026-10-05):** a plot of 15 KB through a simulated plotter, with six vpype conversions running at the same time, had a longest gap between writes of 715 ms (7 gaps over 300 ms, p99 454 ms) against 200 ms (none over 300 ms) without them, and took 2.4 s longer (15.4 s against 12.8 s). That is real but small: a plotter with a 1 KB buffer should not run dry in 0.7 s. It matters mainly for fast plotters on CTS/RTS with a small buffer, and for how quickly Stop reacts.
+**Plan if you want it:** run the conversion in a child process (`subprocess` running a small entry point in `convert_vpype.py`) at low priority (`nice 10`), with a timeout and a kill on cancel. Progress and the result come back as `status_log` events and a `conversion_done` event; one conversion at a time (second request gets 409). Keep the in-process path for tests. The preview route uses the same runner. **Cheaper first step (S):** refuse a second conversion while one runs, and while a plot is running warn in the dialog ("converting slows the plot a little").
 
 ### 17b. File name length (S)
 **Why not a sidecar file:** presets, previews and tests all rely on the name encoding the options, and a sidecar adds a second file to keep in step (delete, backup, restore). The real risk is only a name over the filesystem limit (255 bytes).
@@ -135,8 +134,10 @@ The global 200 MB upload limit also caps a restore that includes uploads. First 
 
 **What happened:** two intermittent failures, both on Windows. One was a real race (a Stop pressed just before the sender started was lost), now fixed. The other: a run that hung while two test loops ran at the same time, and a `PermissionError` when a sender thread from an earlier test still held `r.hpgl` open. These were not reproduced in 30 or so single runs.
 
+**Pi result (2026-10-05):** three runs of the suite on the Pi Zero 2 W (Linux, ARM, real vpype so no tests skipped): 535, 535 and 534 passed. The one failure was a race in the `slow_plot` fixture (it emitted `print_progress`, which tests wait for, before `bytes_written`); fixed by emitting them the other way round. So the slower machine exposed a flake that Windows did not, which is the point of step 1.
+
 **Plan (M):**
-1. Run the suite 30 times on the Pi and on CI's Linux (a `for` loop in a throwaway workflow) to see whether anything flakes off Windows.
+1. Run the suite 30 times on the Pi and on CI's Linux (a `for` loop in a throwaway workflow) to see whether anything else flakes. (3 of 30 done on the Pi.)
 2. Add `pytest-timeout` to `requirements-dev.txt` and `timeout = 60` to `pytest.ini`, so a hang becomes a failure with a stack dump instead of a stuck CI run.
 3. Make the thread-based tests clean up properly: the `run` fixture in `tests/test_reconnect.py` and the fakes in `tests/test_queue.py` should assert the thread has ended in teardown (not just join with a timeout), so a leaked sender fails the test that leaked it.
 4. Audit tests that wait for `plot_lock.locked()` before `printing` is set (the pattern that exposed the Stop race). Replace with a helper `wait_until_plotting(app)`.
@@ -148,20 +149,25 @@ Keep `PLAN.md` while items are open; delete it when the list is empty. `ToDo.md`
 
 ---
 
-## Pi session (items 7 to 10, and the Pi parts of 16, 17a, 19)
+## Pi session: results (2026-10-05, Pi Zero 2 W, Trixie 64-bit, Python 3.13)
 
-No plotter is needed. What I would do over SSH, and what I need:
+Everything ran in a throwaway copy on port 5001 with its own config, history and uploads; the live instance was not touched and everything was removed afterwards.
 
-**Needed from you:** the Pi's address and the user name; **key-based login** (I cannot type a password into an interactive prompt, and please do not paste one into chat); whether I may update the install (the pushed branch) and restart the `webplotter` service; whether I may `sudo apt install` small packages (`socat`, `poppler-utils` if missing). Say if the Pi must not be touched while something else uses it.
+**Checked and working (previously unchecked):**
+- **Real serial port** (`tests/sim_plotter.py` + `tests/pi_serial_check.py`, a simulated plotter on a pseudo-terminal): a whole plot, the pen change pause with buffer feedback, stop then resume, a cable pulled and replugged (hold, 409 on resume while unplugged, reconnect, resume, the whole drawing arrives), and a queue of two. 25 of 25 checks. This also settled my worry about `.B` in the pen change wait: the source line holds a raw ESC byte, so it is correct.
+- **The pages in a browser** (Chrome driven by `puppeteer-core` through an SSH tunnel): desktop and phone, light and dark, no horizontal overflow, no console errors. Preview tools (legend, travel, zoom, drag, crosshair, replay, scrub), "Watch the plot" following a real plot, pen change dialog, a second page joining a running plot, stop and Resume dialog, "Plot again", the queue with a paper change pause, config dialog (notification fields, theme), backup download and restore through the page (including a non-zip), storage line, delete-old and clear cache.
+- **Real vpype conversion** of a two-layer svg: two pens in the legend and the A4 paper outline in the preview.
+- **PDF import with the real poppler:** Chrome-made PDF with text, a rectangle and a circle became an svg (25 paths, 42 glyph references) and converted to 55 paths, 0.92 m.
 
-**Simulated plotter (no hardware):** a `socat` pair of pseudo-terminals plus a 60-line script that answers `ESC.L`, `ESC.B`, `IN;OI;`, `OA;`, and consumes bytes at a chosen speed. It lets the real pyserial code on Linux run a whole plot, a pen change, a stop, a resume, and the queue. Killing the `socat` process simulates an unplugged cable, which exercises the real `SerialException` path in the reconnect code instead of the fake serial module. This turns most of items 1 to 6 from "untested" into "tested against a real serial port, with a simulated plotter". It still proves nothing about what a real plotter does with `ESC.K`, `PU;` or the buffer.
+**Bugs this found, all fixed (46878d3):**
+1. With Tasmota switched off, every plot still paused 2 s before sending and held the plot lock for 30 s afterwards (the ticked "shut down when finished" box is submitted from a hidden block). Next plot or queue start got 409 for 30 s.
+2. "Watch the plot" stayed hidden until some later event (`cursor_ok` was decided after the first state broadcast).
+3. Phone layout: jog controls, pen select and "Add to queue" were squeezed or wrapped.
+4. History rows: the buttons were clipped and the time wrapped.
+5. A test fixture race (see item 19) and a Python 3.9 test failure (see the top).
 
-**Looking at the pages (items 7 to 9):** forward the Pi's port 5000 over SSH to this machine, drive Edge (already installed on Windows) with `puppeteer-core`, and take screenshots at desktop and phone width, light and dark. That also lets me click through the queue, resume dialog, backup section, notification fields, storage row and the preview tools (zoom, legend, replay, crosshair), and read console errors. A large generated HPGL file shows how the replay and the pen cursor behave at size.
-
-**PDF import (item 10):** upload real PDFs (text, vector art, a scanned page) and compare poppler's real output with what the importer assumes.
-
-**Installer (item 16):** run the update path on the Pi and check uploads, config and history survive.
-
-**Conversion load (item 17a) and flakes (item 19):** measure the serial loop while a big conversion runs; run the test suite repeatedly on Linux.
-
-Everything done on the Pi is reported with what I saw (screenshots, logs), and anything I change on your install is listed.
+**Still open from the session:**
+- UIkit closes the config dialog when a confirm dialog opens over it (restore). Acceptable; it could be avoided by confirming inside the dialog.
+- Software flow control sends at most about 300 B/s once the plotter's buffer is half full (`sleep(0.1)` per 30 byte chunk). That is the original behaviour, not new, but a fast plotter would be held back by it. Worth a look when you have a plotter: it may deserve a smaller sleep or a larger chunk.
+- The browser flows are not in the repo (they live in a scratch folder). If you want them kept, they could go in `tests/ui/` with a README; they need Chrome and an SSH tunnel, so they would not run in CI.
+- Item 9 (replay on a large real plot) was only tried on 15 to 46 KB files: it was smooth, but nothing here is a multi-megabyte vpype file.
