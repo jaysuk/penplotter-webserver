@@ -32,6 +32,6 @@ Open:
 - [ ] Pi Plot shield buttons: the GPIO code in main.py is commented out and only logs a message.
 - [ ] The Telegram token is still sent back to the browser in clear text by `GET /save_configfile`
       (the login password is not).
-- [ ] Plot queue (several files in a row). The history exists, a queue does not.
+- [x] Plot queue: several files in a row, with an optional paper change between them. Stop holds it. Untested on a real plotter, like the other plot control.
 - [x] Plot history: "Plot again" from a history row (a deleted file stays listed by name, without the button)
 - [ ] More plotter options?

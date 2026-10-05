@@ -11,6 +11,9 @@ stop_requested = False   # the stop button was pressed for the current plot
 plot_finished = False    # the data has been sent (or the plot stopped); only power-off waits are left
 current_file = 'None'
 start_stamp = 0
+queue_active = False     # the queue runner is going through the queued plots
+queue_hold = False       # Stop was pressed: the queue does not start the next plot
+queue_message = ''       # why the queue last stopped
 
 # What a browser needs to rebuild the plot view after a refresh, or when it connects while a
 # plot is running (started from another client). Filled by record_event().
@@ -25,6 +28,7 @@ drawn_seconds = None     # time spent sending the last plot, without pauses (for
 
 def initialize():
     global printing, paused, wait_reason, wait_pen, stop_requested, plot_finished, current_file, start_stamp
+    global queue_active, queue_hold, queue_message
     printing = False
     paused = False
     wait_reason = None
@@ -33,6 +37,9 @@ def initialize():
     plot_finished = False
     current_file = 'None'
     start_stamp = 0
+    queue_active = False
+    queue_hold = False
+    queue_message = ''
     reset_plot_state()
 
 
@@ -83,6 +90,7 @@ def plot_state(running, file):
             'pen': wait_pen if running and paused else None,
             'eta': plot_eta if running else None,
             'file': file if running else None,
+            'queue_active': queue_active,
             'progress': plot_progress,
             'bytes_written': plot_bytes,
             'buffer_size': plot_buffer_size if running else None,

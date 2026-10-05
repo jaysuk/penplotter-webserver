@@ -221,7 +221,7 @@ def test_socket_connect_syncs_lock_state(app, client, uploads, slow_plot):
     assert lock_state(main.socketio.test_client(main.app)) == ['off']
     (uploads / 'a.hpgl').write_text('IN;')
     client.post('/start_plot', data=PLOT)
-    assert wait_for(lambda: main.plot_lock.locked())
+    assert wait_for(lambda: app.globals.printing)       # under way, so its own broadcast is over
     assert lock_state(main.socketio.test_client(main.app)) == ['on']  # e.g. a refreshed page
 
 

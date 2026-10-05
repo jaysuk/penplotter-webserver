@@ -501,29 +501,32 @@ function clearLog() {
   jQuery("#bytes_written").html("");
 }
 
-// Start plotting
-function startPlot() {
-  const plotterData = jQuery("#plotterData").serializeArray();
-  console.log("plotterData", plotterData);
-
-  // Validation
+// The plot form as a query string, or null (after telling the user why) when it is not complete
+function plotFormData() {
   if (jQuery("#fileName").val() == "") {
     notify("No *.hpgl file selected", "danger");
-    return false;
+    return null;
   }
   if (jQuery("#portList").val() == null) {
     notify("No COM port selected", "danger");
     updatePorts();
-    return false;
+    return null;
   }
   if (jQuery(".penChoice").length > 0 && jQuery(".penChoice:checked").length === 0) {
     notify("Select at least one pen to plot", "danger");
-    return false;
+    return null;
   }
   updatePenSelection();
+  return jQuery("#plotterData").serialize();
+}
+
+// Start plotting
+function startPlot() {
+  const data = plotFormData();
+  if (data === null) return false;
 
   axios
-    .post("/start_plot", jQuery("#plotterData").serialize())
+    .post("/start_plot", data)
     .then(function (response) {
       // handle success
       if (response.status == 200) {
@@ -587,11 +590,11 @@ function applyPlotState(state) {
   jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
   jQuery(".resumePlot").toggleClass("uk-hidden", !state.paused);
 
-  // Held back for a manual pen change: ask for the pen, and close the question when it is over
-  if (state.running && state.paused && state.wait_reason === "pen_change") {
-    showPenChange(state.pen);
+  // Held back (pen change, paper change, lost connection): say why, and close the notice when it is over
+  if (state.running && state.paused && WAIT_NOTICES[state.wait_reason]) {
+    showWaitNotice(state);
   } else {
-    hidePenChange();
+    hideWaitNotice();
   }
   setEta(state.running ? state.eta : null);
 
@@ -630,17 +633,110 @@ function setEta(eta) {
   jQuery(".etaText").text(text);
 }
 
-// Pen change dialog
-function showPenChange(pen) {
-  jQuery("#penChangeNumber").text(pen);
-  if (!UIkit.modal("#modal-penChange").isToggled()) {
-    UIkit.modal("#modal-penChange").show();
+// The dialog shown while the plot is held back, by wait_reason
+const WAIT_NOTICES = {
+  pen_change: {
+    title: "Change pen",
+    text: (state) => "Wait until the plotter has stopped moving, then load pen " + state.pen + " and press Resume.",
+    resume: "Resume",
+    stop: "Stop plot",
+  },
+  paper_change: {
+    title: "Change the paper",
+    text: () => "Take out the finished sheet and load the next one, then press Resume to plot the next file in the queue.",
+    resume: "Resume",
+    stop: "Stop queue",
+  },
+};
+
+function showWaitNotice(state) {
+  const notice = WAIT_NOTICES[state.wait_reason];
+  jQuery("#waitTitle").text(notice.title);
+  jQuery("#waitText").text(notice.text(state));
+  jQuery("#waitResume").text(notice.resume).toggleClass("uk-hidden", !notice.resume);
+  jQuery("#waitStop").text(notice.stop);
+  if (!UIkit.modal("#modal-wait").isToggled()) {
+    UIkit.modal("#modal-wait").show();
   }
 }
 
-function hidePenChange() {
-  const modal = UIkit.modal("#modal-penChange");
+function hideWaitNotice() {
+  const modal = UIkit.modal("#modal-wait");
   if (modal.isToggled()) modal.hide();
+}
+
+// Plot queue
+function addToQueue() {
+  const data = plotFormData();
+  if (data === null) return;
+  const form = new URLSearchParams(data);
+  form.set("pause_after", jQuery("#queuePause").is(":checked") ? "1" : "");
+  axios
+    .post("/queue/add", form)
+    .then(function () {
+      notify("Added to the queue", "success");
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
+}
+
+function queueAction(route, fields) {
+  return axios.post("/queue/" + route, new URLSearchParams(fields || {})).catch(function (error) {
+    notify(errorMessage(error), "danger");
+    console.error(error);
+  });
+}
+
+function startQueue() {
+  queueAction("start");
+}
+
+function clearQueue() {
+  UIkit.modal.confirm("Remove every waiting file from the queue?").then(function () {
+    queueAction("clear");
+  }, function () {});
+}
+
+// Draw the queue (sent by the server whenever it changes, and when a page connects)
+function renderQueue(queue) {
+  const list = jQuery("#queueList").empty();
+  jQuery("#queueEmpty").toggleClass("uk-hidden", queue.items.length > 0);
+  jQuery("#queueMessage").text(queue.message || "");
+  jQuery(".startQueue").prop("disabled", queue.active || queue.items.length === 0);
+  for (const item of queue.items) {
+    const id = Number(item.id);
+    const running = item.status === "running";
+    const row = jQuery("<li>").toggleClass("uk-text-muted", !running && queue.active);
+    row.append(jQuery("<span>").text(item.file));
+    if (item.pens) row.append(jQuery("<span class='uk-text-small uk-text-muted'>").text(" (pens " + item.pens + ")"));
+    if (running) {
+      row.append(jQuery("<span class='uk-label uk-margin-small-left'>").text("plotting"));
+    } else {
+      row.append(
+        `<div class="uk-margin-small-top">` +
+          `<label class="uk-text-small uk-margin-small-right"><input class="uk-checkbox queuePauseAfter" type="checkbox" data-id="${id}"` +
+          `${item.pause_after ? " checked" : ""}> Paper change after</label>` +
+          `<a href="#" class="uk-icon-link uk-margin-small-right queueMove" data-id="${id}" data-direction="up" title="Move up" data-uk-icon="icon: arrow-up"></a>` +
+          `<a href="#" class="uk-icon-link uk-margin-small-right queueMove" data-id="${id}" data-direction="down" title="Move down" data-uk-icon="icon: arrow-down"></a>` +
+          `<a href="#" class="uk-icon-link queueRemove" data-id="${id}" title="Remove" data-uk-icon="icon: close"></a>` +
+          `</div>`
+      );
+    }
+    list.append(row);
+  }
+}
+
+function updateQueue() {
+  return axios
+    .get("/queue")
+    .then(function (response) {
+      renderQueue(response.data);
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
 }
 
 // Plotter control: move the pen by hand

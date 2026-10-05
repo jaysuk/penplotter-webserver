@@ -23,6 +23,7 @@ import globals
 import history
 import hpgl_analysis
 import notification
+import plot_queue
 import plotter_control
 import presets
 import send2serial
@@ -35,6 +36,7 @@ from config import config
 globals.initialize()
 history.init()
 presets.init()
+plot_queue.init()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
@@ -309,9 +311,28 @@ def prepare_plot_file(events, file, analysis, pens):
     return path, hpgl_analysis.analyze(path), path
 
 
+def wait_for_paper_change(events):
+    """Hold back between two plots of the queue until Resume is pressed (Stop holds the queue)."""
+    globals.wait_reason = 'paper_change'
+    globals.paused = True
+    events.emit('status_log', {'data': 'Change the paper, then press Resume to plot the next file.'})
+    broadcast_plot_state()
+    plotter_name = config.get('plotter', 'name', fallback='Plotter')
+    socketio.start_background_task(notification.telegram_sendNotification,
+                                   '{}: {}: Change the paper'.format(plotter_name, current_plot))
+    while globals.paused and not globals.stop_requested:
+        time.sleep(0.25)
+    globals.clear_wait()
+
+
 def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None,
-         options=None):
-    """Run a plot. Runs in a background task; the caller must already hold plot_lock."""
+         options=None, power_on=True, keep_power=None, paper_change=False):
+    """Run a plot. Runs in a background task; the caller must already hold plot_lock.
+
+    The queue runs several plots in a row: `power_on` is false when the plotter was left switched
+    on by the previous plot, `keep_power` is a function that tells whether another plot follows
+    (then the plotter is not switched off) and `paper_change` waits for Resume before that next
+    plot. Returns how it ended: 'completed', 'stopped' or 'failed'."""
     global current_plot
     events = PlotEvents()
     try:
@@ -340,7 +361,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             history.set_estimate(job, analysis['seconds'])
 
         # Tasmota - switch the plotter on and give it time to start up
-        if poweroff == 'on':
+        if poweroff == 'on' and power_on:
             tasmota.tasmota_setStatus(events, 'on')
             wait_seconds(events, tasmota.on_delay(),
                          'Waiting {} s for the plotter to start up (Stop cancels the plot)'.format(tasmota.on_delay()),
@@ -360,10 +381,17 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
                 outcome = 'stopped' if globals.stop_requested else 'completed'
         globals.plot_finished = True
 
+        # In a queue: the next plot follows, so the plotter stays on and the paper may be changed
+        another_follows = outcome == 'completed' and keep_power is not None and keep_power()
+        if another_follows and paper_change:
+            wait_for_paper_change(events)
+
         # Tasmota - turn the plotter off, once it has had time to finish drawing. Flow control
         # without buffer feedback can have a lot of the plot still queued in the plotter when the
         # last byte is sent, so this is a delay you set (Stop skips it).
-        if poweroff == 'on':
+        if poweroff == 'on' and another_follows:
+            events.emit('status_log', {'data': 'Leaving the plotter on for the next plot.'})
+        elif poweroff == 'on':
             if outcome == 'stopped':
                 # Stopped plots have been told to abort; just let the pen lift
                 wait_seconds(events, 2, 'Switching the plotter off in 2 s', stoppable=False)
@@ -394,6 +422,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
         # Unlock editing
         socketio.emit('lock_edit', {'data': 'off'})
         broadcast_plot_state()
+    return outcome or 'failed'
 
 
 # ////////////////////////////////////////////////////////////////////////////
@@ -639,8 +668,10 @@ def delete_file():
     filename = data.get('filename')
     path = upload_file_path(filename)
 
-    if plot_lock.locked():
+    if plot_lock.locked() or globals.queue_active:
         return 'Files cannot be deleted while plotting', 409
+    if plot_queue.has_file(filename):
+        return 'The file is in the plot queue: remove it from the queue first', 409
 
     # Delete file
     if path and os.path.isfile(path):
@@ -714,6 +745,8 @@ def claim_plot(name):
 
 def begin_plot(values):
     """Start a plot in a background task (they run for a long time, so the request must not wait)."""
+    if globals.queue_active:
+        return 'The queue is running: Stop it first', 409
     request_, error = plot_request(values)
     if error:
         return error
@@ -756,16 +789,18 @@ def replot():
 # Stop the printing process
 @app.route('/stop_plot', methods=['POST'])
 def stop_plot():
+    if globals.queue_active:
+        globals.queue_hold = True       # whichever plot is running, the queue does not go on
     if not plot_lock.locked():
         # Make sure the UI is not left locked
         socketio.emit('lock_edit', {'data': 'off'})
-        return 'No plot is running'
+        return 'The queue will stop' if globals.queue_active else 'No plot is running'
 
     globals.stop_requested = True
     globals.printing = False
     globals.clear_wait()     # a paused plot must wake up to notice the stop
     if globals.plot_finished:
-        # Only waiting to switch the plotter off: the plot itself was not cancelled
+        # Only waiting (to switch the plotter off, or for the paper): the plot itself was not cancelled
         return 'Skipping the wait'
     plotter_name = config.get('plotter', 'name', fallback='Plotter')
     socketio.start_background_task(
@@ -796,6 +831,159 @@ def pause_plot():
 @app.route('/resume_plot', methods=['POST'])
 def resume_plot():
     return set_paused(False)
+
+# ////////////////////////////////////////////////////////////////////////////
+# The plot queue: several files in a row. Stop holds the queue (the plot that was running stays at
+# the top, waiting), it does not clear it.
+queue_lock = threading.Lock()
+
+
+def queue_state():
+    return {'active': globals.queue_active, 'message': globals.queue_message, 'items': [
+        {'id': item['id'], 'file': item['file'], 'status': item['status'], 'pause_after': item['pause_after'],
+         'pens': item['options'].get('pens', ''), 'tasmota': item['options'].get('tasmota') == 'on'}
+        for item in plot_queue.items()]}
+
+
+def broadcast_queue():
+    socketio.emit('queue_state', {'data': queue_state()})
+
+
+def run_queue():
+    """Plot the queued files one after another. Runs in a background task."""
+    # Whether the previous plot left the plotter switched on: then this one need not switch it on
+    plotter = {'left_on': False}
+    message = ''
+    try:
+        while True:
+            item = plot_queue.next_waiting()
+            if item is None:
+                message = 'The queue is finished'
+                break
+            if globals.queue_hold:
+                message = 'The queue is stopped'
+                break
+            request_, error = plot_request(item['options'])
+            if error:
+                message = 'The queue is held: {}: {}'.format(item['file'], error[0])
+                PlotEvents().emit('error', {'data': message})
+                break
+            # Jogging takes the plotter for a moment: give it a few seconds
+            claimed = False
+            for _ in range(20):
+                claimed = claim_plot(request_['name'])
+                if claimed or globals.queue_hold:
+                    break
+                time.sleep(0.25)
+            if not claimed:
+                message = 'The queue is stopped' if globals.queue_hold else 'The queue is held: the plotter is busy'
+                break
+            plot_queue.set_status(item['id'], plot_queue.RUNNING)
+            broadcast_queue()
+
+            def another_follows(item=item):
+                plotter['left_on'] = plot_queue.count_waiting(exclude=item['id']) > 0
+                return plotter['left_on']
+
+            options = request_['options']
+            already_on = plotter['left_on']
+            plotter['left_on'] = False
+            outcome = plot(request_['path'], options['port'], options['baudrate'], options['flowControl'],
+                           options['tasmota'], options['timelapse'], request_['pens'], options['pen_change'],
+                           request_['analysis'], options=options, power_on=not already_on,
+                           keep_power=another_follows, paper_change=item['pause_after'])
+            if outcome != 'completed':
+                plotter['left_on'] = False
+            if outcome == 'completed':
+                plot_queue.done(item['id'])
+            else:
+                plot_queue.set_status(item['id'], plot_queue.WAITING)     # still to do: it stays at the top
+            broadcast_queue()
+            if outcome != 'completed' or globals.queue_hold:
+                message = 'The queue is stopped' if globals.queue_hold else 'The queue is held: {} {}'.format(
+                    item['file'], 'failed' if outcome == 'failed' else 'was stopped')
+                break
+    except Exception as e:
+        traceback.print_exc()
+        message = 'The queue stopped: ' + repr(e)
+        PlotEvents().emit('error', {'data': message})
+    finally:
+        globals.queue_active = False
+        globals.queue_message = message
+        PlotEvents().emit('status_log', {'data': message})
+        broadcast_queue()
+        broadcast_plot_state()
+
+
+@app.route('/queue', methods=['GET'])
+def get_queue():
+    return jsonify(queue_state())
+
+
+@app.route('/queue/add', methods=['POST'])
+def queue_add():
+    request_, error = plot_request(request.form)
+    if error:
+        return error
+    pause_after = request.form.get('pause_after') in ('1', 'true', 'on')
+    if plot_queue.add(request_['options'], pause_after) is None:
+        return 'The queue is full or cannot be saved (at most {} files)'.format(plot_queue.MAX_ITEMS), 400
+    broadcast_queue()
+    return 'Added to the queue'
+
+
+@app.route('/queue/remove', methods=['POST'])
+def queue_remove():
+    if not plot_queue.remove(request.form.get('id')):
+        return 'That plot is not waiting in the queue', 404
+    broadcast_queue()
+    return 'Removed'
+
+
+@app.route('/queue/move', methods=['POST'])
+def queue_move():
+    direction = request.form.get('direction')
+    if direction not in ('up', 'down'):
+        return 'Invalid direction', 400
+    if not plot_queue.move(request.form.get('id'), -1 if direction == 'up' else 1):
+        return 'It cannot move that way', 409
+    broadcast_queue()
+    return 'Moved'
+
+
+@app.route('/queue/pause_after', methods=['POST'])
+def queue_pause_after():
+    item = plot_queue.get(request.form.get('id'))
+    if item is None:
+        return 'No such plot in the queue', 404
+    plot_queue.set_pause_after(item['id'], request.form.get('value') in ('1', 'true', 'on'))
+    broadcast_queue()
+    return 'OK'
+
+
+@app.route('/queue/clear', methods=['POST'])
+def queue_clear():
+    plot_queue.clear()
+    broadcast_queue()
+    return 'Queue cleared'
+
+
+@app.route('/queue/start', methods=['POST'])
+def queue_start():
+    with queue_lock:
+        if globals.queue_active:
+            return 'The queue is already running', 409
+        if plot_lock.locked():
+            return 'A plot is already running', 409
+        if plot_queue.next_waiting() is None:
+            return 'The queue is empty', 400
+        globals.queue_active = True
+        globals.queue_hold = False
+        globals.queue_message = ''
+    broadcast_queue()
+    socketio.start_background_task(run_queue)
+    return 'Queue started'
+
 
 # Saved sets of conversion options
 @app.route('/presets', methods=['GET'])
@@ -1116,6 +1304,7 @@ def on_connect(auth=None):
     state = plot_state()
     state['log'] = globals.plot_log_lines()
     emit('plot_state', {'data': state})
+    emit('queue_state', {'data': queue_state()})
 
 @socketio.event
 def connection(message):
