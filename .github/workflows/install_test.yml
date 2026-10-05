@@ -9,9 +9,9 @@ on:
 jobs:
   Test_Pi_Install:
     runs-on: ubuntu-latest
-    continue-on-error: true 
 
     strategy:
+      fail-fast: false
       matrix:
         board_name: [Zero_W, Zero_2W, Zero_2W_64bit]
         include:
@@ -33,7 +33,7 @@ jobs:
           cpu_info: cpuinfo/raspberrypi_zero2_w_arm64
           base_image: raspios_lite_arm64:latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - uses: pguyot/arm-runner-action@HEAD
        
       with:
@@ -49,9 +49,7 @@ jobs:
             ls -l /etc/apt/
             sudo apt update && apt-get install -qq -y git > /dev/null
 
-            # Test first install  
-            dir="$HOME/webplotter_test"
-            git clone -q https://github.com/ithinkido/penplotter-webserver.git "$dir" && > /dev/null  
+            # Test first install
             sed 's/sudo reboot/$HOME\/penplotter_venv\/bin\/python3 $HOME\/webplotter\/main.py \&\nsleep 10\npkill -f "$HOME\/penplotter_venv\/bin\/python3 $HOME\/webplotter\/main.py"/' install.sh > testinstall.sh
             sed -i 's/-q //' testinstall.sh
             chmod +x testinstall.sh
@@ -66,7 +64,7 @@ jobs:
             # Get test file 
             echo -e "\e[32m Get File \e[0m"
 
-            sudo wget -q -P uploads/ https://raw.githubusercontent.com/ithinkido/PiPlot/main/images/columbia_A4.svg
+            sudo wget -q -P "$HOME/webplotter/uploads/" https://raw.githubusercontent.com/ithinkido/PiPlot/main/images/columbia_A4.svg
             # cp config.ini.sample config.ini          
 
             # Test exsiting install

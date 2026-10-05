@@ -10,4 +10,4 @@ vpype/*
 *.ucomp
 clear.sh
 compile.py
-_pycache_/*
+__pycache__/

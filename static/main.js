@@ -1,32 +1,44 @@
 // Update port list
 function updatePorts() {
-  axios
+  return axios
     .get("/update_ports")
     .then(function (response) {
       // handle success
       if (response.status == 200) {
-        // Remove old content from list
-        jQuery(".portList").html("");
-        for (var content of response.data.content) {
-          jQuery(".portList").append(
-            `<option value="${content}">${content}</option>`
-          );
-        }
+        jQuery(".portList").each(function () {
+          const previous = jQuery(this).val();
+          // Remove old content from list
+          jQuery(this).html("");
+          for (var content of response.data.content) {
+            const value = escapeHtml(content);
+            jQuery(this).append(`<option value="${value}">${value}</option>`);
+          }
+          // Keep the previous selection if it is still available
+          if (previous) jQuery(this).val(previous);
+        });
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     })
     .then(function () {});
 }
 
 // Auto detect Baudrate
+var baudDetectRunning = false;
+
 function updateBaud() {
+  if (baudDetectRunning) return;
+  baudDetectRunning = true;
+
   // load spinner icon while the pi check for baudrate
-  jQuery(".updateBaud").html(
-    '<a href="#" class="uk-icon-link mac-button updateBaud" title="Auto detect baudrate" uk-spinner></a>'
-  );
+  jQuery(".updateBaud").html('<span uk-spinner></span>');
+
+  const restoreIcon = function () {
+    baudDetectRunning = false;
+    jQuery(".updateBaud").html('<span data-uk-icon="icon: search"></span>');
+  };
 
   // send port info over first
   jQuery
@@ -41,18 +53,14 @@ function updateBaud() {
         } else {
           notify("Plotter not detected", "warning");
         }
-        // put back normal icon
-        jQuery(".updateBaud").html(
-          '<a href="#" class="uk-icon-link mac-button updateBaud" title="Auto detect baudrate" data-uk-tooltip data-uk-icon="icon: search"></a>'
-        );
+        restoreIcon();
       }
     )
-
     .fail(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
-    })
-    .then(function () {});
+      restoreIcon();
+    });
 }
 
 // Update file list
@@ -73,7 +81,7 @@ function updateFiles() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     })
     .then(function () {});
@@ -81,7 +89,7 @@ function updateFiles() {
 
 // Handle file selection
 function selectFile(element) {
-  const filename = jQuery(element).data("filename");
+  const filename = jQuery(element).attr("data-filename");
 
   // Update form
   jQuery("#fileName").val(filename);
@@ -92,12 +100,12 @@ function selectFile(element) {
   if (li) jQuery(li).addClass("uk-alert-primary");
 
   // Update sidebar
-  jQuery(".selectedFilename").html(filename);
+  jQuery(".selectedFilename").text(filename);
 }
 
 // Handle file deletion
 function deleteFile(element) {
-  const filename = jQuery(element).data("filename");
+  const filename = jQuery(element).attr("data-filename");
 
   axios
     .post("/delete_file", { filename: filename })
@@ -110,7 +118,7 @@ function deleteFile(element) {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     })
     .then(function () {});
@@ -125,7 +133,7 @@ function updatePageSize(element) {
 
 // Handle file conversion
 function convertFileModal(element) {
-  const filename = jQuery(element).data("filename");
+  const filename = jQuery(element).attr("data-filename");
   jQuery("#convertFile").val(filename);
   UIkit.modal("#modal-convertFile").show();
 }
@@ -134,13 +142,14 @@ function convertFileModal(element) {
 function convertFile() {
   const convertData = jQuery("#convertData").serializeArray();
   console.log("convertData", convertData);
-  jQuery("#loader").removeClass("uk-hidden");
 
   // Validation
   if (jQuery("#convertFile").val() == "") {
     notify("No *.svg file selected", "danger");
     return false;
   }
+
+  jQuery("#loader").removeClass("uk-hidden");
 
   axios
     .post("/start_conversion", jQuery("#convertData").serialize())
@@ -152,17 +161,19 @@ function convertFile() {
           notify(response.data, "danger");
         } else {
           console.log(response);
-          notify(response.data, "susuccess");
+          notify(response.data, "success");
         }
 
         updateFiles();
         UIkit.modal("#modal-convertFile").hide();
-        jQuery("#loader").addClass("uk-hidden");
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
+    })
+    .then(function () {
+      jQuery("#loader").addClass("uk-hidden");
     });
 }
 
@@ -215,14 +226,14 @@ function startPlot() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
 
 function stopPlot() {
   axios
-    .get("/stop_plot")
+    .post("/stop_plot")
     .then(function (response) {
       // handle success
       if (response.status == 200) {
@@ -235,7 +246,7 @@ function stopPlot() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
@@ -252,7 +263,7 @@ function actionReboot() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
@@ -269,7 +280,7 @@ function actionPoweroff() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
@@ -284,14 +295,14 @@ function actionTasmota() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
 
 // Fetch config.ini data and update UI
 function updateConfiguration() {
-  axios
+  return axios
     .get("/save_configfile")
     .then(function (response) {
       // handle success
@@ -300,20 +311,21 @@ function updateConfiguration() {
         jQuery("#telegram_chatid").val(response.data.telegram_chatid);
         jQuery("#tasmota_enable").val(response.data.tasmota_enable);
         jQuery("#tasmota_ip").val(response.data.tasmota_ip);
-        jQuery(".plotter_name").html(response.data.plotter_name);
+        jQuery(".plotter_name").html(escapeHtml(response.data.plotter_name));
         jQuery(".portList").val(response.data.plotter_port).change();
         jQuery("#device").val(response.data.plotter_device).change();
-        jQuery("#baudrate").val(response.data.plotter_baudrate).change();
+        jQuery("#baudRate").val(response.data.plotter_baudrate).change();
         jQuery("#flowControl").val(response.data.plotter_flowControl).change();
-      }
-      if (response.data.tasmota_enable == "false") {
-        jQuery("#tasmota_control").addClass("uk-hidden");
-      } else {
-        jQuery("#tasmota_contol").removeClass("uk-hidden");
+
+        if (String(response.data.tasmota_enable).toLowerCase() == "true") {
+          jQuery("#tasmota_control").removeClass("uk-hidden");
+        } else {
+          jQuery("#tasmota_control").addClass("uk-hidden");
+        }
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
@@ -343,7 +355,7 @@ function actionOpenConfig() {
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }
@@ -360,10 +372,11 @@ function saveConfig() {
       // handle success
       if (response.status == 200) {
         notify(response.data, "success");
+        updateConfiguration();
       }
     })
     .catch(function (error) {
-      notify(error, "danger");
+      notify(errorMessage(error), "danger");
       console.error(error);
     });
 }

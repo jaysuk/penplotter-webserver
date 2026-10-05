@@ -1,9 +1,9 @@
 [telegram]
-telegram_token = XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-telegram_chatid = XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+telegram_token =
+telegram_chatid =
 
 [tasmota]
-tasmota_enable = true
+tasmota_enable = false
 tasmota_ip = 192.168.1.101
 
 [timelapse]
@@ -18,3 +18,8 @@ device = hp7475a
 baudrate = 9600
 flowcontrol = CTS/RTS
 
+# Optional: require a login (HTTP basic auth) by adding an [auth] section.
+# Anyone who can reach port 5000 can otherwise reboot the Pi and start plots.
+# [auth]
+# username = admin
+# password = change-me

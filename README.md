@@ -59,6 +59,24 @@ Configure options in *config.ini* using the web interface to set:
 - Telegram Chat ID for notifications.
 - Timelapse Settings
 
+## Security
+
+By default anyone who can reach port 5000 can upload and delete files, start plots and reboot the Pi.
+Only run this on a trusted network, or enable a login by adding an `[auth]` section to *config.ini*:
+
+```ini
+[auth]
+username = admin
+password = change-me
+```
+
+Restart the service afterwards (`sudo systemctl restart webplotter`) or edit the file before the first start.
+The login uses HTTP basic auth, so use it behind HTTPS if the network is not trusted.
+
+Custom vpype commands cannot use `eval`, `script`, `read`, `write`, `forfile`, `include`, `%expressions%` or file paths.
+
+Set `WEBPLOTTER_DEBUG=1` to start Flask in debug mode (development only: it exposes an interactive debugger).
+
 ## ToDO
 
 - [x] Fix Mobile UI

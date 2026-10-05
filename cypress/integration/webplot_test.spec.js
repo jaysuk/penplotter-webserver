@@ -16,7 +16,7 @@ context('Actions', () => {
   })
 
   it('convert file', () => {
-    cy.get('.convertFile').click()
+    cy.get('.convertFile').first().click()
   })
   
   it('start conversion', () => {

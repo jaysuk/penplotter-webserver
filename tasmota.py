@@ -1,64 +1,55 @@
-import configparser
 import requests
 
-from flask_socketio import SocketIO, emit
+# Shared, live configuration object (updated when settings are saved in the UI)
+from config import config
 
-# Read Configuration
-config = configparser.ConfigParser()
-config.read('config.ini')
+REQUEST_TIMEOUT = 5  # seconds
 
-TASMOTA_ENABLE = False
-if (config.has_option('tasmota', 'tasmota_enable')):
-    TASMOTA_ENABLE = config['tasmota']['tasmota_ip']
-TASMOTA_IP = False
-if (config.has_option('tasmota', 'tasmota_enable')):
-    TASMOTA_IP = config['tasmota']['tasmota_ip']
+
+def _enabled():
+    return config.get('tasmota', 'tasmota_enable', fallback='false').strip().lower() == 'true'
+
+
+def _ip():
+    return config.get('tasmota', 'tasmota_ip', fallback='').strip()
+
+
+def _send_command(socketio, command):
+    """Send a Power command to the Tasmota device. Returns the response body, or False on failure."""
+    ip = _ip()
+    if not ip:
+        socketio.emit('error', {'data': 'No Tasmota IP address configured'})
+        return False
+    try:
+        response = requests.get(
+            "http://{ip}/cm".format(ip=ip),
+            params={'cmnd': 'Power {}'.format(command)},
+            timeout=REQUEST_TIMEOUT
+        )
+        return response.content
+    except requests.exceptions.Timeout:
+        message = 'Timeout while trying to contact Tasmota device'
+    except requests.exceptions.TooManyRedirects:
+        message = 'Too many redirects while trying to contact Tasmota device'
+    except requests.exceptions.ConnectionError:
+        message = 'Connection error while trying to contact Tasmota device'
+    except requests.exceptions.RequestException as e:
+        message = 'Tasmota request failed: {}'.format(repr(e))
+    print(message)
+    socketio.emit('error', {'data': message})
+    return False
+
 
 def tasmota_setStatus(socketio, status):
-    if TASMOTA_ENABLE == 'true':
-        if status == 'on' or status == 'off':
-            try:
-                r = requests.get("http://{ip}/cm?cmnd=Power%20{status}".format(ip=TASMOTA_IP, status=status.capitalize() )).content
-                return r
-            except requests.exceptions.Timeout:
-                socketio.emit('error', {'data': 'Timeout while trying to contact Tasmota device'})
-                return print('Timeout while trying to contact Tasmota device')
-                # Maybe set up for a retry, or continue in a retry loop
-            except requests.exceptions.TooManyRedirects:
-                socketio.emit('error', {'data': 'TooManyRedirects while trying to contact Tasmota device'})
-                return print('TooManyRedirects')
-                # Tell the user their URL was bad and try a different one
-            except requests.exceptions.ConnectionError:
-                socketio.emit('error', {'data': 'Connection Error while trying to contact Tasmota device'})
-                return print('ConnectionError')
-            except requests.exceptions.RequestException as e:
-                # catastrophic error. bail.
-                socketio.emit('error', {'data': repr(e)})
-                raise SystemExit(e)
-        else:
-            print('Please use only on or off')
-    else:
+    if not _enabled():
         return False
+    if status not in ('on', 'off'):
+        print('Please use only on or off')
+        return False
+    return _send_command(socketio, status.capitalize())
+
 
 def tasmota_setToggle(socketio):
-    if TASMOTA_ENABLE == 'true':
-        try:
-            r = requests.get("http://{ip}/cm?cmnd=Power%20TOGGLE".format(ip=TASMOTA_IP)).content
-            return r
-        except requests.exceptions.Timeout:
-            socketio.emit('error', {'data': 'Timeout while trying to contact Tasmota device'})
-            return print('Timeout while trying to contact Tasmota device')
-            # Maybe set up for a retry, or continue in a retry loop
-        except requests.exceptions.TooManyRedirects:
-            socketio.emit('error', {'data': 'TooManyRedirects while trying to contact Tasmota device'})
-            return print('TooManyRedirects')
-            # Tell the user their URL was bad and try a different one
-        except requests.exceptions.ConnectionError:
-            socketio.emit('error', {'data': 'Connection Error while trying to contact Tasmota device'})
-            return print('ConnectionError')
-        except requests.exceptions.RequestException as e:
-            # catastrophic error. bail.
-            socketio.emit('error', {'data': repr(e)})
-            raise SystemExit(e)
-    else:
+    if not _enabled():
         return False
+    return _send_command(socketio, 'TOGGLE')
