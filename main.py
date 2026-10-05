@@ -386,6 +386,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             send_path, temporary = resume_path, resume_path
             analysis = hpgl_analysis.analyze(send_path)
             events.emit('status_log', {'data': 'Resuming from byte {} of the file.'.format(resume_start)})
+        globals.cursor_ok = os.path.abspath(send_path) == os.path.abspath(file)
         if analysis is None and pen_change == 'pause':
             events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
         if analysis is not None:

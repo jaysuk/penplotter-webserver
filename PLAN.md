@@ -43,6 +43,8 @@ no crosshair). The main app's visualiser adds pen layers, a crosshair in mm, and
 a speed multiplier. Our viewer (`static/hpgl_viewer.js`) already has per-pen colours and a HiDPI canvas, but
 no zoom, no travel moves, no legend and no cursor. Worth adding, in this order (one commit each):
 
+(Items 1 to 8 below are done except where noted; replay uses the route length rather than `analysis.marks`.)
+
 1. **Pen legend with show/hide per pen.** Swatch, pen number, drawn length from `analysis.segments`.
    Also lets the user tick pens for `/start_plot`'s `pens` field straight from the preview.
 2. **Pen-up travel toggle.** Dashed grey lines. The parser records travel moves, which makes wasted travel

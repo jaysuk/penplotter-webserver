@@ -201,12 +201,18 @@ function previewFile(element) {
   showPreview(filename, "/uploads/" + encodeURIComponent(filename), null);
 }
 
+// The file shown in the preview, and whether the cursor follows the plot that is running
+var previewedFile = null;
+var watchingPlot = false;
+
 // Show a drawing in the preview dialog. `conversion` is {name, summary} for a conversion that has
 // not been saved yet (it can be saved or abandoned from the dialog), null for a file in the list.
 var previewedConversion = null;
 
-function showPreview(title, url, conversion) {
+function showPreview(title, url, conversion, watch) {
   previewedConversion = conversion;
+  previewedFile = title;
+  watchingPlot = !!watch;
   jQuery("#previewFileName").text(title);
   jQuery("#previewInfo").text("Loading...");
   jQuery("#previewSummary").text(conversion ? describeSummary(conversion.summary) : "");
@@ -257,9 +263,13 @@ function loadPreview(url) {
       }
 
       if (!hpglViewer) {
-        hpglViewer = new HPGLViewer(document.getElementById("hpglCanvas"));
+        hpglViewer = new HPGLViewer(document.getElementById("hpglCanvas"), {
+          onHover: showPreviewCoords,
+          onReplay: showReplayProgress,
+        });
       }
       const stats = hpglViewer.loadHPGL(response.data);
+      resetPreviewTools(stats);
 
       if (stats.paths == 0) {
         jQuery("#previewInfo").text("Nothing to preview: the file contains no pen-down movements");
@@ -273,11 +283,101 @@ function loadPreview(url) {
         info += " (ignored commands: " + stats.unsupported.join(", ") + ")";
       }
       jQuery("#previewInfo").text(info);
+      if (watchingPlot) followPlot(jQuery("#bytes_written").text());
     })
     .catch(function (error) {
       jQuery("#previewInfo").text("Preview failed: " + errorMessage(error));
       console.error(error);
     });
+}
+
+// The tools under the preview: legend, travel, paper, replay
+function resetPreviewTools(stats) {
+  jQuery("#previewTravel").prop("checked", false);
+  jQuery("#previewCoords").text(PREVIEW_HINT);
+  jQuery("#previewReplayBar").toggleClass("uk-hidden", stats.paths === 0 || watchingPlot);
+  jQuery("#replayToggle").text("Replay");
+  jQuery("#replaySeek").val(0);
+  jQuery("#replayTime").text("");
+
+  // The paper is only known for a conversion that has not been saved yet
+  if (previewedConversion && previewedConversion.paper) {
+    const paper = HPGLViewer.paperSizeMm(previewedConversion.paper.size, previewedConversion.paper.orientation, previewedConversion.paper.rotate);
+    hpglViewer.setPaper(paper);
+  } else {
+    hpglViewer.setPaper(null);
+  }
+  buildLegend();
+}
+
+const PREVIEW_HINT = "Scroll to zoom, drag to move, double-click to fit.";
+
+function buildLegend() {
+  const legend = jQuery("#previewLegend").empty();
+  const pens = hpglViewer.penList();
+  const canChoose = pens.length > 1 && /\.hpgl$/i.test(previewedFile || "") && !previewedConversion &&
+    jQuery("#fileName").val() === previewedFile && jQuery(".penChoice").length > 0;
+  jQuery("#previewUsePens").toggleClass("uk-hidden", !canChoose);
+  if (pens.length === 0) return;
+  for (const pen of pens) {
+    const label = jQuery("<label class='uk-margin-small-right uk-text-nowrap'/>");
+    jQuery("<input/>", { type: "checkbox", class: "uk-checkbox legendPen", value: pen.pen, checked: pen.visible }).appendTo(label);
+    jQuery("<span class='legend-swatch'/>").css("background", pen.color).appendTo(label);
+    label.append(document.createTextNode(" Pen " + pen.pen + " (" + (pen.lengthMm / 1000).toFixed(1) + " m)"));
+    legend.append(label);
+  }
+}
+
+function showPreviewCoords(info) {
+  jQuery("#previewCoords").text(info ? info.xMm.toFixed(1) + ", " + info.yMm.toFixed(1) + " mm from the lower left corner" : PREVIEW_HINT);
+}
+
+// Plot only the pens that are shown in the preview
+function usePreviewPens() {
+  const shown = new Set(hpglViewer.penList().filter((pen) => pen.visible).map((pen) => String(pen.pen)));
+  if (shown.size === 0) {
+    notify("Show at least one pen", "danger");
+    return;
+  }
+  jQuery(".penChoice").each(function () {
+    this.checked = shown.has(this.value);
+  });
+  updatePenSelection();
+  notify("Plotting only the pens shown", "success");
+}
+
+// Replay
+function toggleReplay() {
+  if (!hpglViewer) return;
+  if (hpglViewer.isReplaying()) {
+    hpglViewer.stopReplay();
+    jQuery("#replayToggle").text("Replay");
+  } else {
+    hpglViewer.startReplay(Number(jQuery("#replaySpeed").val()));
+    jQuery("#replayToggle").text("Pause");
+  }
+}
+
+function showReplayProgress(fraction, seconds) {
+  jQuery("#replaySeek").val(Math.round(fraction * 1000));
+  jQuery("#replayTime").text(formatDuration(seconds));
+  if (fraction >= 1) jQuery("#replayToggle").text("Replay");
+}
+
+function seekReplay(value) {
+  hpglViewer.setCursor(Number(value) / 1000);
+  jQuery("#replayTime").text(formatDuration((Number(value) / 1000) * hpglViewer.replaySeconds()));
+}
+
+// Watch the plot that is running: the cursor follows the bytes sent to the plotter
+function watchPlot() {
+  if (!currentPlotFile) return;
+  showPreview(currentPlotFile, "/uploads/" + encodeURIComponent(currentPlotFile), null, true);
+}
+
+function followPlot(text) {
+  const match = /([0-9]+) bytes (?:written|sent)/.exec(text || "");
+  if (watchingPlot && hpglViewer && match) hpglViewer.setCursorOffset(Number(match[1]));
 }
 
 // Update page size options
@@ -401,7 +501,13 @@ function previewConversion() {
     .post("/preview_conversion", jQuery("#convertData").serialize())
     .then(function (response) {
       const name = response.data.name;
-      showPreview(name, "/preview_files/" + encodeURIComponent(name), response.data);
+      const conversion = response.data;
+      conversion.paper = {
+        size: jQuery("#convertData [name=outputsize]").val(),
+        orientation: jQuery("#convertData [name=pageorientation]").val(),
+        rotate: jQuery("#rotate").val(),
+      };
+      showPreview(name, "/preview_files/" + encodeURIComponent(name), conversion);
     })
     .catch(function (error) {
       notify(errorMessage(error), "danger");
@@ -586,7 +692,11 @@ function appendErrorLog(text) {
 
 // Bring the plot view in line with the server: used when the page is opened or refreshed, or
 // connects from another device, while a plot is running, and when the plot is paused or resumed.
+var currentPlotFile = null;
+
 function applyPlotState(state) {
+  currentPlotFile = state.running && state.cursor_ok ? state.file : null;
+  jQuery(".watchPlot").toggleClass("uk-hidden", !currentPlotFile);
   jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
   jQuery(".resumePlot").toggleClass("uk-hidden", !state.paused);
 
@@ -604,6 +714,7 @@ function applyPlotState(state) {
   jQuery(".printProgress").val(state.progress || 0);
   if (state.bytes_written !== undefined) {
     jQuery("#bytes_written").text(state.bytes_written);
+    followPlot(state.bytes_written);
   }
 
   if (state.buffer_size) {

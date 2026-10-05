@@ -25,7 +25,7 @@ def slow_plot(app, monkeypatch):
     state = {'release': False}
 
     def fake_send(socketio, hpglfile, port, baud, flow, **kwargs):
-        app.globals.printing = True
+        app.globals.printing = not app.globals.stop_requested
         socketio.emit('status_log', {'data': 'Configured for ' + flow})
         socketio.emit('buffer_size', {'data': '1024'})
         socketio.emit('print_progress', {'data': 42})

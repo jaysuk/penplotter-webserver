@@ -82,3 +82,21 @@ def test_plot_again_refuses_what_cannot_be_plotted(app, client, uploads, slow_pl
     assert client.post('/replot', data={'job': job}).status_code in (400, 409)
     done = app.history.start('a.hpgl', '/dev/ttyAMA0', 9600, 'None')
     assert client.post('/replot', data={'job': done}).status_code == 409   # a plot is running
+
+
+# ---- the live cursor in the preview ------------------------------------------------------------
+
+def test_the_cursor_follows_only_a_plot_of_the_whole_file(app, client, uploads, slow_plot):
+    (uploads / 'a.hpgl').write_bytes(b'IN;SP1;PU0,0;PD10,10;PU;SP2;PU5,5;PD20,20;PU;SP0;')
+    assert client.post('/start_plot', data=PLOT).data == b'Plot started'
+    assert wait_for(lambda: app.globals.printing)
+    assert app.main.plot_state()['cursor_ok'] is True        # the offsets are those of the file in the list
+    client.post('/stop_plot')
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert app.main.plot_state()['cursor_ok'] is False       # nothing is running
+
+    slow_plot['release'] = False
+    assert client.post('/start_plot', data=dict(PLOT, pens='2')).data == b'Plot started'
+    assert wait_for(lambda: app.globals.printing)
+    assert app.main.plot_state()['cursor_ok'] is False       # a copy with one pen: offsets differ
+    client.post('/stop_plot')

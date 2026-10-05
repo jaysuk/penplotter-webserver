@@ -328,7 +328,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
     # Only plotters that can report their buffer size and free space support buffer based flow control
     use_buffer = flowControl not in ('HP-IB', 'XON/XOFF', 'NONE')
 
-    globals.printing = True
+    # A Stop that arrived before the sender got going must not be undone by starting
+    globals.printing = not globals.stop_requested
     tty = None
     hpgl = None
     finished = False

@@ -84,6 +84,22 @@ def parse_numbers(args):
         return []
 
 
+DEFAULT_CHORD = 5.0     # degrees per straight piece of a circle or arc (the HP-GL default)
+
+
+def arc_points(cx, cy, x0, y0, sweep, chord=DEFAULT_CHORD):
+    """Points along an arc round (cx, cy) from (x0, y0), `sweep` degrees (counter-clockwise when
+    positive), without the start point. Empty for an arc with no radius or no sweep."""
+    radius = math.hypot(x0 - cx, y0 - cy)
+    if radius == 0 or sweep == 0:
+        return []
+    chord = min(max(abs(chord), 0.5), 90.0)
+    steps = max(1, math.ceil(abs(sweep) / chord))
+    start = math.atan2(y0 - cy, x0 - cx)
+    return [(cx + radius * math.cos(start + math.radians(sweep) * i / steps),
+             cy + radius * math.sin(start + math.radians(sweep) * i / steps)) for i in range(1, steps + 1)]
+
+
 class State:
     """The plotter's drawing state, advanced one command at a time."""
 
@@ -111,6 +127,8 @@ class State:
             numbers = parse_numbers(args)
             self.speed = numbers[0] if numbers and numbers[0] > 0 else None
             return []
+        if code in ('CI', 'AA', 'AR'):
+            return self._curve(code, parse_numbers(args))
         if code in ('PA', 'PR', 'PU', 'PD'):
             if code == 'PA':
                 self.absolute = True
@@ -129,6 +147,32 @@ class State:
                 self.x, self.y = x, y
             return moves
         return []
+
+    def _curve(self, code, numbers):
+        """A circle (CI) or an arc (AA absolute, AR relative centre). The plotter lowers the pen
+        for it whatever the pen state is. Returns the moves, as `apply` does."""
+        moves = []
+        if code == 'CI':
+            if not numbers or numbers[0] <= 0:
+                return moves
+            radius = numbers[0]
+            cx, cy = self.x, self.y
+            moves.append((cx, cy, cx + radius, cy, False))      # out to the circle
+            x0, y0 = cx + radius, cy
+            for x, y in arc_points(cx, cy, x0, y0, 360, numbers[1] if len(numbers) > 1 else DEFAULT_CHORD):
+                moves.append((x0, y0, x, y, True))
+                x0, y0 = x, y
+            moves.append((x0, y0, cx, cy, False))               # and back to the centre
+            return moves
+        if len(numbers) < 3:
+            return moves
+        cx, cy = (numbers[0], numbers[1]) if code == 'AA' else (self.x + numbers[0], self.y + numbers[1])
+        x0, y0 = self.x, self.y
+        for x, y in arc_points(cx, cy, x0, y0, numbers[2], numbers[3] if len(numbers) > 3 else DEFAULT_CHORD):
+            moves.append((x0, y0, x, y, True))
+            x0, y0 = x, y
+        self.x, self.y = x0, y0
+        return moves
 
 
 def _new_segment(pen, start):
@@ -174,7 +218,7 @@ def analyze(path, units_per_mm=UNITS_PER_MM, model=None):
         for start, end, code, args in iter_commands(f):
             if code == 'PR':
                 relative = True
-            elif code in ('CI', 'AA', 'AR', 'EA', 'ER', 'EW', 'EP', 'FP', 'RA', 'RR', 'WG', 'LB'):
+            elif code in ('EA', 'ER', 'EW', 'EP', 'FP', 'RA', 'RR', 'WG', 'LB'):
                 unsupported.add(code)
 
             was_down = state.pen_down

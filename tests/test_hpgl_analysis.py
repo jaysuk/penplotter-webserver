@@ -1,4 +1,5 @@
 import io
+import math
 
 import pytest
 
@@ -88,7 +89,7 @@ def test_empty_and_pen_up_files(hpgl, write):
 
 
 def test_unsupported_drawing_commands_are_reported(hpgl, write):
-    assert hpgl.analyze(write(b'IN;SP1;PU0,0;CI50;'))['unsupported'] == ['CI']
+    assert hpgl.analyze(write(b'IN;SP1;PU0,0;EA10,10;'))['unsupported'] == ['EA']
 
 
 def test_segments_follow_the_pens(hpgl, write):
@@ -188,3 +189,50 @@ def test_summary(hpgl, write):
     s = hpgl.summary(hpgl.analyze(write(VPYPE_TWO_LAYERS)), correction=2.0)
     assert [p['pen'] for p in s['pens']] == [1, 2] and s['width_mm'] > 0 and s['seconds'] > 0
     assert hpgl.summary(None) is None
+
+
+# ---- circles and arcs -------------------------------------------------------------------------
+
+def drawn_moves(hpgl, content):
+    state, moves = hpgl.State(), []
+    for _, _, code, args in hpgl.iter_commands(__import__('io').BytesIO(content)):
+        moves += state.apply(code, args)
+    return state, [m for m in moves if m[4]]
+
+
+def test_a_circle_is_drawn_whatever_the_pen_state(hpgl):
+    state, drawn = drawn_moves(hpgl, b'IN;SP1;PU100,100;CI50;')
+    assert len(drawn) == 72                                  # 5 degree chords
+    assert all(abs(math.hypot(m[2] - 100, m[3] - 100) - 50) < 1e-6 for m in drawn)
+    assert (state.x, state.y) == (100, 100) and state.pen_down is False     # back at the centre, pen as it was
+
+
+def test_circle_chord_angle(hpgl):
+    _, drawn = drawn_moves(hpgl, b'PU0,0;CI10,30;')
+    assert len(drawn) == 12
+
+
+def test_an_arc_goes_counter_clockwise_from_the_pen_position(hpgl):
+    state, drawn = drawn_moves(hpgl, b'PU50,0;AA0,0,90;')
+    assert round(state.x, 6) == 0 and round(state.y, 6) == 50
+    assert len(drawn) == 18
+    state, _ = drawn_moves(hpgl, b'PU50,0;AA0,0,-90;')
+    assert round(state.x, 6) == 0 and round(state.y, 6) == -50
+
+
+def test_a_relative_arc_takes_its_centre_from_the_pen(hpgl):
+    state, _ = drawn_moves(hpgl, b'PA100,0;AR-50,0,180;')    # centre at (50, 0)
+    assert round(state.x, 6) == 0 and round(state.y, 6) == 0
+
+
+def test_degenerate_curves_draw_nothing(hpgl):
+    for content in (b'CI0;', b'CI;', b'CI-5;', b'PU5,5;AA5,5,90;', b'PU5,5;AA0,0,0;', b'AA1,1;'):
+        assert drawn_moves(hpgl, content)[1] == []
+
+
+def test_curves_count_towards_the_analysis(hpgl, write):
+    result = hpgl.analyze(write(b'IN;SP1;PU0,0;CI50;'))
+    assert result['unsupported'] == []
+    assert result['draw_length'] == pytest.approx(2 * math.pi * 50, rel=0.01)
+    assert result['bounds'][2] == pytest.approx(50, abs=1) and result['bounds'][3] == pytest.approx(50, abs=1)
+    assert result['seconds'] > 0

@@ -286,6 +286,16 @@ body {
   border-color: #555;
 }
 
+/* The colour of a pen in the preview's legend */
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #888;
+  vertical-align: middle;
+}
+
 /* Plotter control: the jog arrows keep a fixed size so the buttons beside them have room */
 .jog-pad {
   width: 180px;

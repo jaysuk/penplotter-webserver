@@ -168,3 +168,12 @@ def test_stop_ends_a_paused_plot(app, plot):
 
     assert result is True and seen['chunks'] == 5
     assert 'end_of_print' in sio.names() and Serial.instances[0].closed
+
+
+def test_a_stop_that_came_first_is_not_undone(app, plot):
+    app.globals.stop_requested = True            # the stop button, pressed just before the sender got going
+    result, sio = plot('CTS/RTS', BIG_PLOT)
+    port = app.serial.Serial.instances[0]
+    assert result is True and app.globals.printing is False
+    assert not any(w.startswith(b'PU0') for w in port.written)     # no plot data was sent
+    assert 'end_of_print' in sio.names()

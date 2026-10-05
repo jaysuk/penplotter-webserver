@@ -440,6 +440,8 @@
                 <code id="statusLog"></code>
                 <code id="bytes_written"></code>
               </div>
+              <a href="#" class="watchPlot uk-button uk-button-default uk-button-small uk-margin-small-top uk-hidden"
+                title="See where the plotter has got to">Watch the plot</a>
             </div>
           </div>
         </div>
@@ -766,6 +768,36 @@
       </div>
       <div class="uk-modal-body">
         <canvas id="hpglCanvas" width="400" height="200"></canvas>
+        <div class="uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
+          <div class="uk-width-expand">
+            <span id="previewCoords" class="uk-text-small uk-text-muted"></span>
+          </div>
+          <div class="uk-width-auto">
+            <label class="uk-text-small uk-margin-small-right"><input id="previewTravel" class="uk-checkbox" type="checkbox"> Pen-up travel</label>
+            <button class="uk-button uk-button-default uk-button-small previewFit" type="button">Fit</button>
+          </div>
+        </div>
+        <div id="previewLegend" class="uk-margin-small-top uk-text-small"></div>
+        <button id="previewUsePens" class="uk-button uk-button-default uk-button-small uk-margin-small-top uk-hidden usePreviewPens"
+          type="button" title="Tick only the pens shown here in the plot settings">Plot only the pens shown</button>
+        <div id="previewReplayBar" class="uk-grid-small uk-flex-middle uk-margin-small-top uk-hidden" data-uk-grid>
+          <div class="uk-width-auto">
+            <button id="replayToggle" class="uk-button uk-button-default uk-button-small" type="button">Replay</button>
+          </div>
+          <div class="uk-width-auto">
+            <select id="replaySpeed" class="uk-select uk-form-small" title="Replay speed, times the plotter's pen speed">
+              <option value="1">x1</option>
+              <option value="10">x10</option>
+              <option value="60" selected>x60</option>
+              <option value="300">x300</option>
+              <option value="1000">x1000</option>
+            </select>
+          </div>
+          <div class="uk-width-expand">
+            <input id="replaySeek" class="uk-range" type="range" min="0" max="1000" value="0">
+          </div>
+          <div class="uk-width-auto"><span id="replayTime" class="uk-text-small"></span></div>
+        </div>
         <p id="previewInfo" class="uk-text-small uk-text-muted uk-margin-small-top"></p>
         <p id="previewSummary" class="uk-text-small uk-margin-remove-top"></p>
         <div id="previewActions" class="uk-grid uk-grid-small uk-margin-small-top uk-hidden" data-uk-grid>
@@ -1175,6 +1207,7 @@
 
       socket.on('bytes_written', function (msg, cb) {
         jQuery('#bytes_written').html(jQuery('<div/>').text(msg.data).html());
+        followPlot(msg.data);
         scrollLog();
       })
 
@@ -1484,6 +1517,52 @@
 
       jQuery(document).on('change', '.queuePauseAfter', function () {
         queueAction('pause_after', { id: jQuery(this).data('id'), value: this.checked ? '1' : '' });
+      });
+
+      // Closing the preview stops the replay and the live cursor
+      UIkit.util.on('#modal-previewFile', 'hidden', function () {
+        if (hpglViewer) hpglViewer.stopReplay();
+        watchingPlot = false;
+      });
+
+      // Preview tools
+      jQuery(document).on('change', '#previewTravel', function () {
+        if (hpglViewer) hpglViewer.setShowTravel(this.checked);
+      });
+
+      jQuery(document).on('change', '.legendPen', function () {
+        if (hpglViewer) hpglViewer.setPenVisible(Number(this.value), this.checked);
+      });
+
+      jQuery(document).on('click', '.previewFit', function (e) {
+        e.preventDefault();
+        if (hpglViewer) hpglViewer.fit();
+      });
+
+      jQuery(document).on('click', '.usePreviewPens', function (e) {
+        e.preventDefault();
+        usePreviewPens();
+      });
+
+      jQuery(document).on('click', '#replayToggle', function (e) {
+        e.preventDefault();
+        toggleReplay();
+      });
+
+      jQuery(document).on('change', '#replaySpeed', function () {
+        if (hpglViewer) hpglViewer.setReplaySpeed(Number(this.value));
+      });
+
+      jQuery(document).on('input', '#replaySeek', function () {
+        if (!hpglViewer) return;
+        hpglViewer.stopReplay();
+        jQuery('#replayToggle').text('Replay');
+        seekReplay(this.value);
+      });
+
+      jQuery(document).on('click', '.watchPlot', function (e) {
+        e.preventDefault();
+        watchPlot();
       });
 
       jQuery(document).on('click', '.resumeJob', function (e) {
