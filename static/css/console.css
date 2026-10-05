@@ -293,6 +293,11 @@ body.console {
   height: 34px;
   font: inherit;
 }
+/* The list that opens from a select: UIkit makes its options #444, which is grey on dark in the dark theme */
+.console .uk-select option,
+.console .uk-select:not([multiple]):not([size]) option { background-color: var(--ctl); color: var(--fg); }
+.console .uk-select option:checked { background-color: var(--accent); color: var(--bg); }
+.console .uk-select option:disabled { color: var(--muted); }
 .console .uk-textarea { height: auto; }
 .console .uk-form-small { height: 30px; }
 .console .uk-input:focus, .console .uk-select:focus, .console .uk-textarea:focus {
