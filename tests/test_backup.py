@@ -64,9 +64,14 @@ def test_a_backup_holds_the_settings_the_history_and_a_manifest(app, client):
     assert 'attachment' in response.headers['Content-Disposition'] and '.zip' in response.headers['Content-Disposition']
     assert b'Backup Plotter' in archive.read('config.ini')
     assert json.loads(archive.read('manifest.json'))['format'] == 1
-    copy = sqlite3.connect(':memory:')
-    copy.deserialize(archive.read('history.db'))
-    assert copy.execute('SELECT file FROM jobs').fetchall() == [('a.hpgl',)]
+    with open('backup-check.db', 'wb') as f:                 # Connection.deserialize needs Python 3.11
+        f.write(archive.read('history.db'))
+    copy = sqlite3.connect('backup-check.db')
+    try:
+        assert copy.execute('SELECT file FROM jobs').fetchall() == [('a.hpgl',)]
+    finally:
+        copy.close()
+        os.remove('backup-check.db')
 
 
 def test_uploads_are_only_included_when_asked_for(client, uploads):
