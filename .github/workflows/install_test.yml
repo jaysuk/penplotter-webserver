@@ -52,6 +52,7 @@ jobs:
             export WEBPLOTTER_BRANCH="${{ github.ref_name }}"
             export WEBPLOTTER_NO_REBOOT=1
             chmod +x install.sh
+            installer="$PWD/install.sh"
 
             # Start the server, convert an SVG through it and stop the server again
             smoke_test() {
@@ -82,7 +83,7 @@ jobs:
             }
 
             echo -e "\e[32m Test first install.\e[0m"
-            ./install.sh
+            "$installer"
 
             # Add a user file and a changed setting, to check that an update keeps them
             wget -q -P "$HOME/webplotter/uploads/" https://raw.githubusercontent.com/ithinkido/PiPlot/main/images/columbia_A4.svg
@@ -90,7 +91,7 @@ jobs:
             smoke_test
 
             echo -e "\e[32m Test updating an existing install.\e[0m"
-            ./install.sh
+            "$installer"
             test -f "$HOME/webplotter/uploads/columbia_A4.svg" || { echo "Update lost the uploads"; exit 1; }
             grep -q 'CI Plotter' "$HOME/webplotter/config.ini" || { echo "Update lost config.ini"; exit 1; }
             smoke_test
