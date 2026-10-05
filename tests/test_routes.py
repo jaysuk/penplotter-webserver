@@ -28,8 +28,9 @@ def slow_plot(app, monkeypatch):
         app.globals.printing = not app.globals.stop_requested
         socketio.emit('status_log', {'data': 'Configured for ' + flow})
         socketio.emit('buffer_size', {'data': '1024'})
-        socketio.emit('print_progress', {'data': 42})
+        # progress last: tests wait for it, so everything before it has been recorded by then
         socketio.emit('bytes_written', {'data': '42%, 420 bytes written.'})
+        socketio.emit('print_progress', {'data': 42})
         while app.globals.printing and not state['release']:
             time.sleep(0.005)
         return True

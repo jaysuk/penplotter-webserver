@@ -78,6 +78,8 @@ bash -n install.sh               # the installer can only really be tested on a 
 
 ## Testing notes
 
+`tests/sim_plotter.py` is a simulated HP-GL plotter on a pseudo-terminal (Linux/macOS), and `tests/pi_serial_check.py` drives a throwaway copy of the app against it with the real pyserial: a whole plot, pen change pause, stop then resume, an unplugged and re-plugged port, and the queue. Run it on a Pi after changing `send2serial.py`. It has no CTS line, so use Software or XON/XOFF flow control with it, and it says nothing about what a real plotter does.
+
 Tests that replace `send2serial.sendToPlotter` must use `monkeypatch.setattr` (assigning the attribute leaks into later tests), and fakes take `**kwargs` because `plot()` passes `analysis`, `pen_pause` and `correction`. Tests that start the real sender in a thread must make it a daemon and stop it on teardown, or a failure leaves the run hanging at a pen change.
 
 New Python modules must be added to `SOURCES` and `APP_MODULES` in `tests/conftest.py`. `tests/conftest.py` copies the sources into a temp dir and imports them there with a fake pyserial (`tests/fake_serial.py`) and a stub converter, so tests never touch the repo's `config.ini` or `uploads/`. The `app` fixture resets uploads, config, serial state and `globals` for each test. When changing the plot lifecycle, drive it with the `slow_plot` fixture rather than sleeping.
