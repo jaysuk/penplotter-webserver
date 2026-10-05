@@ -15,8 +15,8 @@ import pytest
 import fake_serial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py']
-APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'convert_vpype']
+SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py']
+APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'convert_vpype']
 
 
 @pytest.fixture(scope='session')
@@ -50,12 +50,13 @@ def env(tmp_path_factory):
     import notification
     import tasmota
     import globals as app_globals
+    import history
 
     notification.telegram_sendNotification = lambda message: False
 
     yield types.SimpleNamespace(
         dir=work, main=main, send2serial=send2serial, tasmota=tasmota,
-        globals=app_globals, convert_stub=stub, serial=fake_serial)
+        globals=app_globals, history=history, convert_stub=stub, serial=fake_serial)
 
     os.chdir(saved_cwd)
     sys.path.remove(str(work))
@@ -76,6 +77,10 @@ def app(env):
     env.convert_stub.calls.clear()
     env.serial.reset()
     env.globals.initialize()
+    env.history.DB_PATH = 'history.db'
+    env.history.init()
+    with env.history._connect() as conn:
+        conn.execute('DELETE FROM jobs')
 
     snapshot = {section: dict(main.config[section]) for section in main.config.sections()}
     yield env

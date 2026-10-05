@@ -1,3 +1,4 @@
+import configparser
 import hmac
 import os
 import re
@@ -18,6 +19,7 @@ from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 
 import globals
+import history
 import notification
 import send2serial
 import tasmota
@@ -26,6 +28,7 @@ from config import config
 # import RPi.GPIO as GPIO
 
 globals.initialize()
+history.init()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
@@ -76,9 +79,17 @@ for _section in ('telegram', 'tasmota', 'timelapse', 'plotter'):
 # ////////////////////////////////////////////////////////////////////////////
 # Access control
 
+def config_value(section, option):
+    """A config value as written by the UI ('%' doubled). A hand edited file may contain a single
+    '%', which configparser refuses to interpolate, so fall back to the text as it is."""
+    try:
+        return config.get(section, option, fallback='')
+    except configparser.InterpolationError:
+        return config.get(section, option, raw=True, fallback='')
+
+
 def auth_configured():
-    return bool(config.get('auth', 'username', raw=True, fallback='')
-                and config.get('auth', 'password', raw=True, fallback=''))
+    return bool(config_value('auth', 'username') and config_value('auth', 'password'))
 
 
 def is_authorized():
@@ -89,9 +100,9 @@ def is_authorized():
     if auth is None:
         return False
     user_ok = hmac.compare_digest((auth.username or '').encode('utf-8'),
-                                  config.get('auth', 'username', raw=True).encode('utf-8'))
+                                  config_value('auth', 'username').encode('utf-8'))
     pass_ok = hmac.compare_digest((auth.password or '').encode('utf-8'),
-                                  config.get('auth', 'password', raw=True).encode('utf-8'))
+                                  config_value('auth', 'password').encode('utf-8'))
     return user_ok and pass_ok
 
 
@@ -160,39 +171,98 @@ def check_vpype_command(command):
     return None
 
 
+class PlotEvents:
+    """Stands in for socketio during a plot: sends each event on and remembers it, so a page that
+    is refreshed (or opened on another device) mid-plot can be brought up to date."""
+
+    def emit(self, name, data=None, **kwargs):
+        globals.record_event(name, data)
+        socketio.emit(name, data, **kwargs)
+
+
+def plot_state():
+    return globals.plot_state(plot_lock.locked(), current_plot)
+
+
+def broadcast_plot_state():
+    socketio.emit('plot_state', {'data': plot_state()})
+
+
+def last_error():
+    for entry in reversed(globals.plot_log_lines()):
+        if entry['type'] == 'error':
+            return entry['text']
+    return None
+
+
+def wait_seconds(events, seconds, message, stoppable):
+    """Wait in short steps (the plot stays stoppable). Stop skips the wait when `stoppable`."""
+    if seconds <= 0:
+        return
+    events.emit('status_log', {'data': message})
+    end = time.time() + seconds
+    while time.time() < end and not (stoppable and globals.stop_requested):
+        time.sleep(0.25)
+
+
 def plot(file, port, baudrate, flowControl, poweroff, timelapse):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock."""
     global current_plot
+    events = PlotEvents()
+    job = history.start(os.path.basename(file), port, baudrate, flowControl)
+    outcome, error = None, None
     try:
         # Lock editing while printing
         socketio.emit('lock_edit', {'data': 'on'})
+        broadcast_plot_state()
 
-        # Tasmota - check for on
-        # TODO this probable wont work for most plotters - still need to load page etc
+        # Tasmota - switch the plotter on and give it time to start up
         if poweroff == 'on':
-            tasmota.tasmota_setStatus(socketio, 'on')
-            time.sleep(2) # Just to be sure, wait 2 seconds
+            tasmota.tasmota_setStatus(events, 'on')
+            wait_seconds(events, tasmota.on_delay(),
+                         'Waiting {} s for the plotter to start up (Stop cancels the plot)'.format(tasmota.on_delay()),
+                         stoppable=True)
 
-        # Start printing
-        send2serial.sendToPlotter(socketio, str(file), str(port), int(baudrate), str(flowControl))
+        # Start printing (unless Stop was pressed while the plotter was starting up)
+        if globals.stop_requested:
+            events.emit('status_log', {'data': '*** Plot stopped.'})
+            outcome = 'stopped'
+        else:
+            result = send2serial.sendToPlotter(events, str(file), str(port), int(baudrate), str(flowControl))
+            if result is False:
+                outcome, error = 'failed', last_error()
+            else:
+                outcome = 'stopped' if globals.stop_requested else 'completed'
+        globals.plot_finished = True
 
-        # Tasmota - turn off plotter
-        # TODO I think this may need a better solution.
-        # There may still be data in the plotter buffer that needs to be plotteed
+        # Tasmota - turn the plotter off, once it has had time to finish drawing. Flow control
+        # without buffer feedback can have a lot of the plot still queued in the plotter when the
+        # last byte is sent, so this is a delay you set (Stop skips it).
         if poweroff == 'on':
-            print( "Sending power off command to Tasmota" )
-            time.sleep(2) # Just to be sure, wait 2 seconds
-            tasmota.tasmota_setStatus(socketio, 'off')
+            if outcome == 'stopped':
+                # Stopped plots have been told to abort; just let the pen lift
+                wait_seconds(events, 2, 'Switching the plotter off in 2 s', stoppable=False)
+            else:
+                wait_seconds(events, tasmota.off_delay(),
+                             'Waiting {} s for the plotter to finish before switching it off '
+                             '(Stop skips the wait)'.format(tasmota.off_delay()), stoppable=True)
+            print("Sending power off command to Tasmota")
+            tasmota.tasmota_setStatus(events, 'off')
     except Exception as e:
         traceback.print_exc()
-        socketio.emit('error', {'data': 'Plot failed: ' + repr(e)})
+        events.emit('error', {'data': 'Plot failed: ' + repr(e)})
+        if outcome is None:
+            outcome, error = 'failed', repr(e)
     finally:
+        history.finish(job, outcome or 'failed', globals.plot_progress, error)
         globals.printing = False
+        globals.paused = False
         globals.current_file = 'None'
         current_plot = None
         plot_lock.release()
         # Unlock editing
         socketio.emit('lock_edit', {'data': 'off'})
+        broadcast_plot_state()
 
 
 # ////////////////////////////////////////////////////////////////////////////
@@ -251,7 +321,22 @@ def update_files():
 @app.route('/update_ports', methods=['GET'])
 def update_ports():
     ports = send2serial.listComPorts()
+    # Keep the saved default selectable when its adapter is unplugged, or when it is a plain
+    # /dev/ttyUSBx name that now has a stable /dev/serial/by-id/ alias
+    saved = config_value('plotter', 'port')
+    if saved and saved not in ports['content'] and PORT_RE.fullmatch(saved):
+        ports['content'].append(saved)
     return ports
+
+# Recent plots, newest first
+@app.route('/job_history', methods=['GET'])
+def job_history():
+    return jsonify(history.recent())
+
+@app.route('/clear_history', methods=['POST'])
+def clear_history():
+    history.clear()
+    return 'History cleared'
 
 #auto detect baud
 @app.route('/update_baud', methods=['POST'])
@@ -308,6 +393,10 @@ def start_plot():
     if not plot_lock.acquire(blocking=False):
         return 'A plot is already running', 409
     current_plot = name
+    globals.paused = False
+    globals.stop_requested = False
+    globals.plot_finished = False
+    globals.reset_plot_state()
 
     # Plots run for a long time, so don't block the request
     socketio.start_background_task(plot, path, port, baudrate, flowControl, poweroff, timelapse)
@@ -322,13 +411,38 @@ def stop_plot():
         socketio.emit('lock_edit', {'data': 'off'})
         return 'No plot is running'
 
+    globals.stop_requested = True
     globals.printing = False
+    globals.paused = False   # a paused plot must wake up to notice the stop
+    if globals.plot_finished:
+        # Only waiting to switch the plotter off: the plot itself was not cancelled
+        return 'Skipping the wait'
     plotter_name = config.get('plotter', 'name', fallback='Plotter')
     socketio.start_background_task(
         notification.telegram_sendNotification,
         '{}: {}: Cancelled'.format(plotter_name, current_plot))
     globals.current_file = 'None'
     return 'Plot stopped'
+
+def set_paused(paused):
+    if not plot_lock.locked():
+        return 'No plot is running', 409
+    if globals.paused != paused:
+        globals.paused = paused
+        PlotEvents().emit('status_log', {'data': (
+            'Plot paused. The plotter finishes what is already in its buffer.' if paused
+            else 'Plot resumed.')})
+        broadcast_plot_state()
+    return 'Plot paused' if paused else 'Plot resumed'
+
+# Hold back the data sent to the plotter, and continue again
+@app.route('/pause_plot', methods=['POST'])
+def pause_plot():
+    return set_paused(True)
+
+@app.route('/resume_plot', methods=['POST'])
+def resume_plot():
+    return set_paused(False)
 
 # Start converting file using vpype
 @app.route('/start_conversion', methods=['POST'])
@@ -369,27 +483,41 @@ def start_conversion():
 
     return output
 
-# Start reboot sequence
-@app.route('/action_reboot', methods=['POST'])
-def action_reboot():
-    response = Response('action_reboot started')
+def power_action(command):
+    """Run reboot/poweroff through passwordless sudo once the response has been sent.
+
+    A user without NOPASSWD sudo would otherwise get "Rebooting now" and nothing would happen,
+    so check up front and say what is missing."""
+    try:
+        allowed = subprocess.run(['sudo', '-n', '-l', command], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        allowed = False
+    if not allowed:
+        return ('Cannot %s: the user running the web plotter needs passwordless sudo for "%s" '
+                '(add a NOPASSWD sudoers rule for it).' % (command, command)), 500
+
+    response = Response('action_%s started' % command)
 
     @response.call_on_close
     def on_close():
-        subprocess.Popen(['sudo', '-n', 'reboot'])
+        try:
+            subprocess.Popen(['sudo', '-n', command])
+        except OSError:
+            traceback.print_exc()
 
     return response
+
+# Start reboot sequence
+@app.route('/action_reboot', methods=['POST'])
+def action_reboot():
+    return power_action('reboot')
 
 # Start poweroff sequence
 @app.route('/action_poweroff', methods=['POST'])
 def action_poweroff():
-    response = Response('action_poweroff started')
-
-    @response.call_on_close
-    def on_close():
-        subprocess.Popen(['sudo', '-n', 'poweroff'])
-
-    return response
+    return power_action('poweroff')
 
 # Toggle tasmota switch
 @app.route('/action_tasmota', methods=['POST'])
@@ -405,6 +533,9 @@ def action_tasmota():
 def _is_bool(value):
     return value in ('true', 'false')
 
+def _is_seconds(value):
+    return re.fullmatch(r'\d{1,3}', value) is not None and int(value) <= 600
+
 def _is_text(value):
     return len(value) <= 200 and not CONTROL_CHARS_RE.search(value)
 
@@ -413,6 +544,8 @@ CONFIG_FIELDS = {
     'telegram_chatid': ('telegram', 'telegram_chatid', lambda v: re.fullmatch(r'[@\w-]*', v) is not None),
     'tasmota_enable': ('tasmota', 'tasmota_enable', _is_bool),
     'tasmota_ip': ('tasmota', 'tasmota_ip', lambda v: HOST_RE.fullmatch(v) is not None),
+    'tasmota_on_delay': ('tasmota', 'tasmota_on_delay', _is_seconds),
+    'tasmota_off_delay': ('tasmota', 'tasmota_off_delay', _is_seconds),
     'timelapse_enable': ('timelapse', 'timelapse_enable', _is_bool),
     'timelapse_auto_start': ('timelapse', 'timelapse_auto_start', _is_bool),
     'timelapse_preview': ('timelapse', 'timelapse_preview', _is_bool),
@@ -421,7 +554,16 @@ CONFIG_FIELDS = {
     'plotter_device': ('plotter', 'device', lambda v: v in DEVICES),
     'plotter_baudrate': ('plotter', 'baudrate', valid_baudrate),
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
+    # Basic auth needs both; HTTP basic auth cannot have a ':' in the user name
+    'auth_username': ('auth', 'username', lambda v: _is_text(v) and ':' not in v),
+    'auth_password': ('auth', 'password', _is_text),
 }
+
+# Shown when an older config.ini does not have the setting yet
+CONFIG_DEFAULTS = {'tasmota_on_delay': '2', 'tasmota_off_delay': '30'}
+
+# Never sent back to the browser: an empty password in a save means "keep the current one"
+WRITE_ONLY_FIELDS = {'auth_password'}
 
 # Update configfile values
 @app.route('/save_configfile', methods=['GET', 'POST'])
@@ -430,13 +572,33 @@ def save_configfile():
         updates = {}
         for field, (section, option, is_valid) in CONFIG_FIELDS.items():
             if field in request.form:
-                value = request.form.get(field, '').strip()
+                # Passwords may start or end with a space
+                value = request.form.get(field, '')
+                if field not in WRITE_ONLY_FIELDS:
+                    value = value.strip()
                 if not is_valid(value):
                     return 'Invalid value for {}'.format(field), 400
+                if field == 'auth_password' and value == '':
+                    continue
                 updates[(section, option)] = value
 
         with config_lock:
+            if 'auth_username' in request.form:
+                username = updates.get(('auth', 'username'), '')
+                has_password = (('auth', 'password') in updates
+                                or bool(config_value('auth', 'password')))
+                if username and not has_password:
+                    return 'Enter a password to go with the login name', 400
+                if not username:
+                    # Clearing the login name switches the login off
+                    updates.pop(('auth', 'username'), None)
+                    updates.pop(('auth', 'password'), None)
+                    if config.has_section('auth'):
+                        config.remove_section('auth')
+
             for (section, option), value in updates.items():
+                if not config.has_section(section):
+                    config.add_section(section)
                 # '%' must be escaped because of configparser interpolation
                 config[section][option] = value.replace('%', '%%')
 
@@ -451,8 +613,10 @@ def save_configfile():
 
         return 'Configuration Updated'
 
-    output = {field: config.get(section, option, fallback='')
-              for field, (section, option, _) in CONFIG_FIELDS.items()}
+    output = {field: config_value(section, option) or CONFIG_DEFAULTS.get(field, '')
+              for field, (section, option, _) in CONFIG_FIELDS.items()
+              if field not in WRITE_ONLY_FIELDS}
+    output['auth_password_set'] = bool(config_value('auth', 'password'))
     return jsonify(output)
 
 # On connection
@@ -461,8 +625,12 @@ def on_connect(auth=None):
     # Socket.IO connections bypass before_request, so check access here as well
     if not is_authorized():
         return False
-    # Sync the UI lock with the real state (e.g. after a page refresh during a plot)
+    # Sync the UI with the real state (e.g. after a page refresh during a plot, or when another
+    # device opens the page): lock, file being plotted, progress, pause state and the log so far
     emit('lock_edit', {'data': 'on' if plot_lock.locked() else 'off'})
+    state = plot_state()
+    state['log'] = globals.plot_log_lines()
+    emit('plot_state', {'data': state})
 
 @socketio.event
 def connection(message):

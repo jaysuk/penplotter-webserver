@@ -126,3 +126,45 @@ def test_baud_detection_survives_garbage(app, monkeypatch):
     monkeypatch.setattr(app.serial.Serial, 'read', lambda self, size=1: b'\xff\xfe\x80')
     app.send2serial.getBaudRate('/dev/x')   # must not raise UnicodeDecodeError
     assert app.serial.Serial.instances[-1].closed
+
+
+def test_pause_holds_back_the_data_until_resumed(app, plot):
+    import threading
+    Serial = app.serial.Serial
+    seen = {'chunks': 0, 'at_pause': None}
+
+    def pause_after_a_few_chunks(port, data):
+        seen['chunks'] += 1
+        if seen['chunks'] == 20:
+            app.globals.paused = True
+
+            def resume():
+                seen['at_pause'] = seen['chunks']   # nothing was written while paused
+                app.globals.paused = False
+            threading.Timer(0.4, resume).start()
+
+    Serial.on_data = pause_after_a_few_chunks
+    result, sio = plot('CTS/RTS', BIG_PLOT)
+
+    assert result is True
+    assert seen['at_pause'] <= 21 and seen['chunks'] > seen['at_pause']   # carried on after resuming
+    assert ('print_progress', {'data': 100}) in sio.events
+
+
+def test_stop_ends_a_paused_plot(app, plot):
+    import threading
+    Serial = app.serial.Serial
+    seen = {'chunks': 0}
+
+    def pause_then_stop(port, data):
+        seen['chunks'] += 1
+        if seen['chunks'] == 5:
+            app.globals.paused = True
+            # the stop button, pressed while the plot is held back
+            threading.Timer(0.3, lambda: setattr(app.globals, 'printing', False)).start()
+
+    Serial.on_data = pause_then_stop
+    result, sio = plot('CTS/RTS', BIG_PLOT)
+
+    assert result is True and seen['chunks'] == 5
+    assert 'end_of_print' in sio.names() and Serial.instances[0].closed

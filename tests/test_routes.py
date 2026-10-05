@@ -1,6 +1,7 @@
 import base64
 import io
 import time
+import types
 
 import pytest
 import requests
@@ -25,6 +26,10 @@ def slow_plot(app, monkeypatch):
 
     def fake_send(socketio, hpglfile, port, baud, flow):
         app.globals.printing = True
+        socketio.emit('status_log', {'data': 'Configured for ' + flow})
+        socketio.emit('buffer_size', {'data': '1024'})
+        socketio.emit('print_progress', {'data': 42})
+        socketio.emit('bytes_written', {'data': '42%, 420 bytes written.'})
         while app.globals.printing and not state['release']:
             time.sleep(0.005)
         return True
@@ -179,6 +184,7 @@ def test_failed_plot_releases_the_lock(app, client, uploads, monkeypatch):
     assert client.post('/start_plot', data=PLOT).data == b'Plot started'
     assert wait_for(lambda: not app.main.plot_lock.locked())
     assert client.post('/start_plot', data=PLOT).data == b'Plot started'  # not stuck
+    assert wait_for(lambda: not app.main.plot_lock.locked())              # don't leak into the next test
 
 
 def test_socket_connect_syncs_lock_state(app, client, uploads, slow_plot):
@@ -192,6 +198,69 @@ def test_socket_connect_syncs_lock_state(app, client, uploads, slow_plot):
     client.post('/start_plot', data=PLOT)
     assert wait_for(lambda: main.plot_lock.locked())
     assert lock_state(main.socketio.test_client(main.app)) == ['on']  # e.g. a refreshed page
+
+
+def received(sc, name):
+    return [m['args'][0]['data'] for m in sc.get_received() if m['name'] == name]
+
+
+def test_socket_connect_restores_the_plot_view(app, client, uploads, slow_plot):
+    """A refreshed page, or a second device, must see which file is plotting and how far it is."""
+    main = app.main
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: main.plot_lock.locked() and app.globals.plot_progress == 42)
+
+    [state] = received(main.socketio.test_client(main.app), 'plot_state')
+    assert state['running'] is True and state['paused'] is False
+    assert state['file'] == 'a.hpgl'
+    assert state['progress'] == 42 and state['bytes_written'] == '42%, 420 bytes written.'
+    assert state['buffer_size'] == '1024'
+    assert state['log'] == [{'type': 'status_log', 'text': 'Configured for CTS/RTS'}]
+
+
+def test_idle_connect_reports_no_plot(app):
+    [state] = received(app.main.socketio.test_client(app.main.app), 'plot_state')
+    assert state['running'] is False and state['file'] is None and state['buffer_size'] is None
+
+
+def test_new_plot_forgets_the_previous_log(app, client, uploads, slow_plot):
+    app.globals.record_event('status_log', {'data': 'left over'})
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: app.globals.plot_progress == 42)
+    assert 'left over' not in [e['text'] for e in app.globals.plot_log_lines()]
+
+
+def test_pause_and_resume(app, client, uploads, slow_plot):
+    main = app.main
+    assert client.post('/pause_plot').status_code == 409          # nothing to pause
+    assert client.post('/resume_plot').status_code == 409
+
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: main.plot_lock.locked())
+
+    watcher = main.socketio.test_client(main.app)
+    watcher.get_received()
+    assert client.post('/pause_plot').data == b'Plot paused'
+    assert app.globals.paused is True
+    assert received(watcher, 'plot_state')[-1]['paused'] is True   # other clients are told
+    assert received(main.socketio.test_client(main.app), 'plot_state')[0]['paused'] is True
+
+    assert client.post('/resume_plot').data == b'Plot resumed'
+    assert app.globals.paused is False
+    assert received(watcher, 'plot_state')[-1]['paused'] is False
+
+
+def test_stop_while_paused_ends_the_plot(app, client, uploads, slow_plot):
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: app.main.plot_lock.locked())
+    client.post('/pause_plot')
+    assert client.post('/stop_plot').data == b'Plot stopped'
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert app.globals.paused is False                               # does not carry into the next plot
 
 
 def test_baud_detection_route(client):
@@ -229,6 +298,53 @@ def test_config_save_is_applied_live(app, client):
     assert app.tasmota._enabled() and app.tasmota._ip() == '10.1.2.3'
 
 
+def test_config_page_has_a_field_for_every_setting(app, client):
+    """Every setting that can be saved must be editable in the UI."""
+    page = client.get('/').get_data(as_text=True)
+    assert [f for f in app.main.CONFIG_FIELDS if 'name="{}"'.format(f) not in page] == []
+
+
+def basic(credentials):
+    return {'Authorization': 'Basic ' + base64.b64encode(credentials.encode()).decode()}
+
+
+def test_login_can_be_set_and_cleared_from_the_ui(app, client):
+    assert client.post('/save_configfile', data={'auth_username': 'admin', 'auth_password': 'p%ss w0rd'}).status_code == 200
+    assert client.get('/').status_code == 401
+    assert client.get('/', headers=basic('admin:wrong')).status_code == 401
+    assert client.get('/', headers=basic('admin:p%ss w0rd')).status_code == 200   # '%' survives saving
+
+    # The password is never sent back, only whether one is set
+    saved = client.get('/save_configfile', headers=basic('admin:p%ss w0rd')).get_json()
+    assert saved['auth_username'] == 'admin' and saved['auth_password_set'] is True
+    assert 'auth_password' not in saved and 'p%ss' not in str(saved)
+
+    # An empty password field keeps the current password
+    assert client.post('/save_configfile', headers=basic('admin:p%ss w0rd'),
+                       data={'auth_username': 'boss', 'auth_password': ''}).status_code == 200
+    assert client.get('/', headers=basic('boss:p%ss w0rd')).status_code == 200
+
+    # Clearing the user name turns the login off
+    assert client.post('/save_configfile', headers=basic('boss:p%ss w0rd'),
+                       data={'auth_username': '', 'auth_password': ''}).status_code == 200
+    assert client.get('/').status_code == 200
+    assert client.get('/save_configfile').get_json()['auth_password_set'] is False
+
+
+def test_login_needs_a_password_and_a_usable_name(client):
+    assert client.post('/save_configfile', data={'auth_username': 'admin', 'auth_password': ''}).status_code == 400
+    assert client.post('/save_configfile', data={'auth_username': 'a:b', 'auth_password': 'x'}).status_code == 400
+    assert client.get('/').status_code == 200                           # nothing was half saved
+
+
+def test_hand_edited_login_with_a_single_percent_still_works(app, client):
+    main = app.main
+    main.config.add_section('auth')
+    main.config.set('auth', 'username', 'u')
+    main.config._sections['auth']['password'] = 'a%b'   # as read from a file edited by hand
+    assert client.get('/', headers=basic('u:a%b')).status_code == 200
+
+
 # ---- tasmota --------------------------------------------------------------------------------
 
 def test_tasmota_disabled_by_default(client):
@@ -246,3 +362,213 @@ def test_tasmota_unreachable_device_fails_fast(app, client, monkeypatch):
     monkeypatch.setattr(app.tasmota.requests, 'get', get)
     assert client.post('/action_tasmota').status_code == 502
     assert seen.get('timeout')  # without a timeout an offline device would hang the request
+
+
+# ---- reboot / poweroff ----------------------------------------------------------------------
+
+@pytest.fixture
+def fake_sudo(app, monkeypatch):
+    """Record the power commands instead of running them; `allowed` is what `sudo -n -l` answers."""
+    state = {'allowed': True, 'ran': []}
+
+    def run(cmd, **kwargs):
+        assert cmd[:3] == ['sudo', '-n', '-l']
+        return type('R', (), {'returncode': 0 if state['allowed'] else 1})()
+
+    monkeypatch.setattr(app.main.subprocess, 'run', run)
+    monkeypatch.setattr(app.main.subprocess, 'Popen', lambda cmd, **kw: state['ran'].append(cmd))
+    return state
+
+
+@pytest.mark.parametrize('route,command', [('/action_reboot', 'reboot'), ('/action_poweroff', 'poweroff')])
+def test_power_action_runs_with_sudo(client, fake_sudo, route, command):
+    response = client.post(route)
+    assert response.status_code == 200
+    response.close()
+    assert fake_sudo['ran'] == [['sudo', '-n', command]]
+
+
+@pytest.mark.parametrize('route', ['/action_reboot', '/action_poweroff'])
+def test_power_action_reports_missing_sudo_rights(client, fake_sudo, route):
+    fake_sudo['allowed'] = False
+    response = client.post(route)
+    assert response.status_code == 500
+    assert b'passwordless sudo' in response.data
+    response.close()
+    assert fake_sudo['ran'] == []
+
+
+# ---- plot history ---------------------------------------------------------------------------
+
+def history_rows(client):
+    return client.get('/job_history').get_json()
+
+
+def test_completed_plot_is_recorded(app, client, uploads, slow_plot):
+    slow_plot['release'] = True
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: not app.main.plot_lock.locked() and history_rows(client))
+    [job] = history_rows(client)
+    assert job['file'] == 'a.hpgl' and job['status'] == 'completed'
+    assert job['port'] == '/dev/ttyAMA0' and job['baudrate'] == 9600 and job['flow_control'] == 'CTS/RTS'
+    assert job['finished_at'] >= job['started_at'] and job['error'] is None
+
+
+def test_running_and_stopped_plots_are_recorded(app, client, uploads, slow_plot):
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: [j['status'] for j in history_rows(client)] == ['running'])
+    client.post('/stop_plot')
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert [j['status'] for j in history_rows(client)] == ['stopped']
+
+
+def test_failed_plot_keeps_the_reason(app, client, uploads, monkeypatch):
+    (uploads / 'a.hpgl').write_text('IN;')
+
+    def refuse(socketio, *args):
+        socketio.emit('error', {'data': 'could not open port'})
+        return False
+
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', refuse)
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: not app.main.plot_lock.locked() and history_rows(client))
+    [job] = history_rows(client)
+    assert job['status'] == 'failed' and job['error'] == 'could not open port'
+
+
+def test_crashed_plot_is_recorded_as_failed(app, client, uploads, monkeypatch):
+    (uploads / 'a.hpgl').write_text('IN;')
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a: 1 / 0)
+    client.post('/start_plot', data=PLOT)
+    assert wait_for(lambda: not app.main.plot_lock.locked() and history_rows(client))
+    job = history_rows(client)[0]
+    assert job['status'] == 'failed' and 'ZeroDivisionError' in job['error']
+
+
+def test_a_plot_cut_short_by_a_restart_is_marked_interrupted(app, client):
+    app.history.start('a.hpgl', '/dev/x', 9600, 'CTS/RTS')
+    app.history.init()          # what happens when the server starts again
+    assert history_rows(client)[0]['status'] == 'interrupted'
+
+
+def test_clear_history_keeps_the_running_plot(app, client):
+    done = app.history.start('old.hpgl', '/dev/x', 9600, 'None')
+    app.history.finish(done, 'completed', 100)
+    app.history.start('now.hpgl', '/dev/x', 9600, 'None')
+    assert client.post('/clear_history').status_code == 200
+    assert [j['file'] for j in history_rows(client)] == ['now.hpgl']
+    assert client.get('/clear_history').status_code == 405
+
+
+def test_history_is_trimmed(app, client, monkeypatch):
+    monkeypatch.setattr(app.history, 'MAX_ROWS', 3)
+    for n in range(6):
+        app.history.finish(app.history.start('f{}.hpgl'.format(n), '/dev/x', 9600, 'None'), 'completed')
+    assert [j['file'] for j in history_rows(client)] == ['f5.hpgl', 'f4.hpgl', 'f3.hpgl']
+
+
+def test_history_problems_never_stop_a_plot(app, client, uploads, slow_plot, monkeypatch):
+    monkeypatch.setattr(app.history, 'DB_PATH', str(uploads.parent / 'missing_dir' / 'history.db'))
+    slow_plot['release'] = True
+    (uploads / 'a.hpgl').write_text('IN;')
+    assert client.post('/start_plot', data=PLOT).data == b'Plot started'
+    assert wait_for(lambda: not app.main.plot_lock.locked())
+    assert client.get('/job_history').get_json() == []
+
+
+# ---- tasmota power on / off -----------------------------------------------------------------
+
+@pytest.fixture
+def tasmota_calls(app, client, monkeypatch):
+    """Enable tasmota, record the Power commands and the Telegram messages."""
+    calls, messages = [], []
+
+    def get(url, params=None, **kwargs):
+        calls.append(params['cmnd'])
+        return types.SimpleNamespace(content=b'{}')
+
+    monkeypatch.setattr(app.tasmota.requests, 'get', get)
+    monkeypatch.setattr(app.main.notification, 'telegram_sendNotification', messages.append)
+    client.post('/save_configfile', data={'tasmota_enable': 'true', 'tasmota_ip': '10.1.2.3'})
+    return types.SimpleNamespace(power=calls, telegram=messages)
+
+
+def test_tasmota_switches_on_then_off_after_the_delay(app, client, uploads, slow_plot, tasmota_calls):
+    client.post('/save_configfile', data={'tasmota_on_delay': '0', 'tasmota_off_delay': '1'})
+    slow_plot['release'] = True
+    (uploads / 'a.hpgl').write_text('IN;')
+    start = time.time()
+    client.post('/start_plot', data={**PLOT, 'tasmota': 'on'})
+    assert wait_for(lambda: tasmota_calls.power == ['Power On', 'Power Off'], 5)
+    assert time.time() - start >= 1            # waited for the plotter to finish drawing
+
+
+def test_stop_skips_the_wait_before_power_off(app, client, uploads, slow_plot, tasmota_calls):
+    client.post('/save_configfile', data={'tasmota_on_delay': '0', 'tasmota_off_delay': '120'})
+    slow_plot['release'] = True
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data={**PLOT, 'tasmota': 'on'})
+    assert wait_for(lambda: 'Waiting 120 s' in ' '.join(e['text'] for e in app.globals.plot_log_lines()))
+    assert client.post('/stop_plot').data == b'Skipping the wait'
+    assert wait_for(lambda: tasmota_calls.power == ['Power On', 'Power Off'] and not app.main.plot_lock.locked())
+    assert history_rows(client)[0]['status'] == 'completed'     # the plot itself had finished
+    assert not any('Cancelled' in m for m in tasmota_calls.telegram)
+
+
+def test_stop_during_start_up_wait_cancels_the_plot(app, client, uploads, monkeypatch, tasmota_calls):
+    sent = []
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter', lambda *a: sent.append(a))
+    client.post('/save_configfile', data={'tasmota_on_delay': '120'})
+    (uploads / 'a.hpgl').write_text('IN;')
+    client.post('/start_plot', data={**PLOT, 'tasmota': 'on'})
+    assert wait_for(lambda: tasmota_calls.power == ['Power On'])
+    client.post('/stop_plot')
+    assert wait_for(lambda: not app.main.plot_lock.locked(), 5)
+    assert sent == []                          # nothing was sent to the plotter
+    assert history_rows(client)[0]['status'] == 'stopped'
+
+
+def test_tasmota_delays_are_validated(client):
+    saved = client.get('/save_configfile').get_json()
+    assert saved['tasmota_on_delay'] == '2' and saved['tasmota_off_delay'] == '30'
+    for value in ('601', '-1', 'x', '', '1.5'):
+        assert client.post('/save_configfile', data={'tasmota_off_delay': value}).status_code == 400
+    assert client.post('/save_configfile', data={'tasmota_off_delay': '45'}).status_code == 200
+    assert client.get('/save_configfile').get_json()['tasmota_off_delay'] == '45'
+
+
+# ---- stable serial port names ---------------------------------------------------------------
+
+BY_ID = '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0'
+
+
+def test_usb_adapters_are_listed_by_their_stable_name(app, client, monkeypatch):
+    monkeypatch.setattr(app.send2serial, 'byIdPorts', lambda: {BY_ID: '/dev/ttyUSB1'})
+    # /dev/ttyUSB1 is the same adapter, so it is listed once; the Pi's own UART stays
+    assert client.get('/update_ports').get_json()['content'] == [BY_ID, '/dev/ttyAMA0']
+
+
+def test_by_id_names_are_read_from_the_system(app, tmp_path, monkeypatch):
+    try:
+        (tmp_path / 'usb-A-if00-port0').symlink_to('/dev/ttyUSB1')
+    except OSError:
+        pytest.skip('cannot create symlinks here')
+    monkeypatch.setattr(app.send2serial, 'SERIAL_BY_ID', str(tmp_path))
+    assert list(app.send2serial.byIdPorts()) == [str(tmp_path) + '/usb-A-if00-port0']
+
+
+def test_no_by_id_directory_means_no_adapters(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(app.send2serial, 'SERIAL_BY_ID', str(tmp_path / 'missing'))
+    assert app.send2serial.byIdPorts() == {}     # no adapters, or not Linux
+
+
+def test_saved_default_port_stays_selectable(client):
+    client.post('/save_configfile', data={'plotter_port': '/dev/ttyUSB9'})
+    assert '/dev/ttyUSB9' in client.get('/update_ports').get_json()['content']
+
+
+def test_plot_accepts_a_by_id_port(app, client, uploads, slow_plot):
+    (uploads / 'a.hpgl').write_text('IN;')
+    assert client.post('/start_plot', data={**PLOT, 'port': BY_ID}).data == b'Plot started'

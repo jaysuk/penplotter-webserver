@@ -5,6 +5,9 @@ telegram_chatid =
 [tasmota]
 tasmota_enable = false
 tasmota_ip = 192.168.1.101
+# Seconds to wait for the plotter to start up before sending, and to finish drawing before it is switched off
+tasmota_on_delay = 2
+tasmota_off_delay = 30
 
 [timelapse]
 timelapse_enable = false

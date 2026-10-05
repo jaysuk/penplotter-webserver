@@ -76,6 +76,10 @@
               class="uk-text-success selectedFilename"></span></span>
         </div>
         <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
+          <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
+                class="uk-margin-small-right"></span>Pause Print</a></li>
+          <li><a href="#" class="resumePlot uk-hidden"><span data-uk-icon="icon: play-circle"
+                class="uk-margin-small-right"></span>Resume Print</a></li>
           <li><a href="#" class="uk-button-danger stopPlot"><span data-uk-icon="icon: close"
                 class="uk-margin-small-right"></span>Stop Print</a></li>
         </ul>
@@ -316,6 +320,43 @@
         </div>
         <!-- /Status -->
 
+        <!-- History -->
+        <div class="uk-width-1-2@l">
+          <div class="uk-card uk-card-default uk-card-small mac-card">
+            <div class="uk-card-header mac-browser-bar">
+              <div class="uk-grid uk-grid-small">
+                <div class="uk-width-auto">
+                  <h4>Plot History</h4>
+                </div>
+                <div class="uk-width-expand uk-text-right panel-icons">
+                  <a href="#" class="uk-icon-link mac-button mac-mix updateHistory" title="Refresh History" data-uk-tooltip
+                    data-uk-icon="icon: refresh"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-mix clearHistory" title="Clear History" data-uk-tooltip
+                    data-uk-icon="icon: trash"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-min sortable-icon" title="Move" data-uk-tooltip
+                    data-uk-icon="icon: move"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-close closeCard" data-card="history-card"
+                    title="Close" data-uk-tooltip data-uk-icon="icon: chevron-up"></a>
+                  <a href="#" class="uk-icon-link mac-button mac-max showCard uk-hidden" data-card="history-card"
+                    title="Open" data-uk-tooltip data-uk-icon="icon: chevron-down"></a>
+                </div>
+              </div>
+            </div>
+            <div id="history-card" class="uk-card-body">
+              <div class="chart-container uk-panel uk-panel-scrollable">
+                <table class="uk-table uk-table-small uk-table-divider uk-table-responsive">
+                  <thead>
+                    <tr><th>Started</th><th>File</th><th>Result</th><th>Time</th></tr>
+                  </thead>
+                  <tbody id="historyList"></tbody>
+                </table>
+                <p id="historyEmpty" class="uk-text-small uk-text-muted uk-hidden">No plots yet.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /History -->
+
       </div>
       <footer class="uk-section uk-section-small">
         <hr>
@@ -350,6 +391,10 @@
               class="uk-text-success selectedFilename"></span></span>
         </div>
         <ul class="uk-nav uk-nav-default uk-nav-parent-icon unlock-edit uk-hidden" data-uk-nav>
+          <li><a href="#" class="pausePlot"><span data-uk-icon="icon: minus-circle"
+                class="uk-margin-small-right"></span>Pause Print</a></li>
+          <li><a href="#" class="resumePlot uk-hidden"><span data-uk-icon="icon: play-circle"
+                class="uk-margin-small-right"></span>Resume Print</a></li>
           <li><a href="#" class="uk-button-danger stopPlot"><span data-uk-icon="icon: close"
                 class="uk-margin-small-right"></span>Stop Print</a></li>
         </ul>
@@ -542,35 +587,8 @@
         <form id="configData">
           <fieldset class="uk-fieldset uk-grid-small" uk-grid>
 
-            <div class="uk-width-1-2@s">
-              <label class="uk-form-label" for="telegram_token">Telegram Token</label>
-              <div class="uk-margin-small">
-                <input id="telegram_token" class="uk-input" name="telegram_token" type="input">
-              </div>
-            </div>
-
-            <div class="uk-width-1-2@s">
-              <label class="uk-form-label" for="telegram_chatid">Telegram Chat ID</label>
-              <div class="uk-margin-small">
-                <input id="telegram_chatid" class="uk-input" name="telegram_chatid" type="input">
-              </div>
-            </div>
-
-            <div class="uk-width-1-2@s">
-              <label class="uk-form-label" for="tasmota_enable">Enable Tasmota</label>
-              <div class="uk-margin-small">
-                <select id="tasmota_enable" class="uk-select" name="tasmota_enable">
-                  <option value="true">True</option>
-                  <option value="false">False</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="uk-width-1-2@s">
-              <label class="uk-form-label" for="tasmota_ip">Tasmota Ip</label>
-              <div class="uk-margin-small">
-                <input id="tasmota_ip" class="uk-input" name="tasmota_ip" type="input">
-              </div>
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Plotter</h5>
             </div>
 
             <div class="uk-width-1-2@s">
@@ -596,8 +614,7 @@
                 </select>
               </div>
             </div>
-            <div class="uk-width-1-1@s">
-            </div>
+
             <div class="uk-width-1-3@s">
               <label class="uk-form-label" for="plotter_port">Default Port</label>
               <div class="uk-margin-small">
@@ -628,6 +645,113 @@
                   <option value="Software">Software flow ctrl.</option>
                   <option value="None">None</option>
                 </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Telegram notifications</h5>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="telegram_token">Telegram Token</label>
+              <div class="uk-margin-small">
+                <input id="telegram_token" class="uk-input" name="telegram_token" type="input">
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="telegram_chatid">Telegram Chat ID</label>
+              <div class="uk-margin-small">
+                <input id="telegram_chatid" class="uk-input" name="telegram_chatid" type="input">
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Tasmota power switch</h5>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="tasmota_enable">Enable Tasmota</label>
+              <div class="uk-margin-small">
+                <select id="tasmota_enable" class="uk-select" name="tasmota_enable">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="tasmota_ip">Tasmota Ip</label>
+              <div class="uk-margin-small">
+                <input id="tasmota_ip" class="uk-input" name="tasmota_ip" type="input">
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="tasmota_on_delay">Seconds to wait after switching on</label>
+              <div class="uk-margin-small">
+                <input id="tasmota_on_delay" class="uk-input" name="tasmota_on_delay" type="number" min="0" max="600" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="tasmota_off_delay">Seconds to wait before switching off</label>
+              <div class="uk-margin-small">
+                <input id="tasmota_off_delay" class="uk-input" name="tasmota_off_delay" type="number" min="0" max="600" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Timelapse</h5>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">These are stored in config.ini but are not used by this version yet.</p>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="timelapse_enable">Enable Timelapse</label>
+              <div class="uk-margin-small">
+                <select id="timelapse_enable" class="uk-select" name="timelapse_enable">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="timelapse_auto_start">Start With Plot</label>
+              <div class="uk-margin-small">
+                <select id="timelapse_auto_start" class="uk-select" name="timelapse_auto_start">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="timelapse_preview">Preview</label>
+              <div class="uk-margin-small">
+                <select id="timelapse_preview" class="uk-select" name="timelapse_preview">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Login</h5>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">Requires a user name and password (HTTP basic auth) to use the web page. Clear the user name to turn the login off. A change applies immediately, so your browser will ask for the login after saving.</p>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="auth_username">User Name</label>
+              <div class="uk-margin-small">
+                <input id="auth_username" class="uk-input" name="auth_username" type="text" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="auth_password">Password</label>
+              <div class="uk-margin-small">
+                <input id="auth_password" class="uk-input" name="auth_password" type="password" autocomplete="new-password">
               </div>
             </div>
           </fieldset>
@@ -696,8 +820,7 @@
 
       // Set log window
       socket.on('status_log', function (msg, cb) {
-        jQuery('#statusLog').append(jQuery('<div/>').text(msg.data).html() + '<br>');
-        scrollLog();
+        appendStatusLog(msg.data);
       });
 
       socket.on('bytes_written', function (msg, cb) {
@@ -735,8 +858,14 @@
       })
 
       socket.on('error', function (msg, cb) {
-        jQuery('#statusLog').append('<br>' + jQuery('<div class="error"/>').text(msg.data).html());
-        scrollLog()
+        appendErrorLog(msg.data);
+      });
+
+      // Full plot state: sent on connect (page refresh, other device) and when a plot starts,
+      // ends, pauses or resumes
+      socket.on('plot_state', function (msg, cb) {
+        applyPlotState(msg.data);
+        updateHistory();
       });
 
       // Display print progression
@@ -869,6 +998,28 @@
         e.preventDefault();
         stopPlot();
         jQuery('#chartContents').addClass('hidden');
+      });
+
+      // Pause / resume Plot
+      jQuery(document).on('click', '.pausePlot', function (e) {
+        e.preventDefault();
+        pausePlot();
+      });
+
+      jQuery(document).on('click', '.resumePlot', function (e) {
+        e.preventDefault();
+        resumePlot();
+      });
+
+      // Plot history
+      jQuery(document).on('click', '.updateHistory', function (e) {
+        e.preventDefault();
+        updateHistory();
+      });
+
+      jQuery(document).on('click', '.clearHistory', function (e) {
+        e.preventDefault();
+        clearHistory();
       });
 
       // Hide Cards

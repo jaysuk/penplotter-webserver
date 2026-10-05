@@ -148,6 +148,20 @@ ensure_sudo()
 
 banner
 
+# The service file is written for the user running this script and $HOME, so the two must agree.
+# "sudo bash install.sh" breaks that (root, with the real user's home), and the script uses sudo itself.
+if [ -n "$SUDO_USER" ] && [ "$(id -u)" -eq 0 ]; then
+    die "Do not run this installer with sudo. Run it as your normal user ($SUDO_USER); it asks for sudo when it needs it."
+fi
+if [ "$(stat -c %U "$HOME" 2>/dev/null)" != "$(id -un)" ]; then
+    die "Your home folder $HOME does not belong to $(id -un), so the service would be set up wrongly. Log in as the user that should run the web plotter and try again."
+fi
+if [ "$(id -u)" -eq 0 ]; then
+    echo ""
+    echo "${YELLOW} Warning: running as root, so the web plotter service will run as root too.${RESET}"
+    echo "${YELLOW} A normal user is recommended; the default Pi user needs no extra setup.${RESET}"
+fi
+
 #System Info
 . /etc/os-release 2>/dev/null
 echo ""
@@ -330,7 +344,7 @@ else
     rm -rf "$new" "$old"
     run_spin "Downloading to $new" env GIT_TERMINAL_PROMPT=0 git clone -q -b "$BRANCH" "$git" "$new" || { rm -rf "$new"; die "Download failed, nothing was changed."; }
 
-    step "Keeping your uploads and settings"
+    step "Keeping your uploads, settings and plot history"
     # add user files back
     if [ -d "$dir/uploads" ]; then
         rm -rf "$new/uploads"
@@ -345,6 +359,11 @@ else
     else
         cp "$new/config.ini.sample" "$new/config.ini"
         ok "config.ini created"
+    fi
+
+    if [ -e "$dir/history.db" ]; then
+        cp -a "$dir/history.db" "$new/history.db" || { rm -rf "$new"; die "Could not copy your plot history, nothing was changed."; }
+        ok "plot history kept"
     fi
 
     sudo systemctl stop webplotter 2>/dev/null

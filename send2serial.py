@@ -106,11 +106,32 @@ def plotter_cmd(tty, cmd, get_answer=True):
         raise e
 
 
+# Linux names USB serial adapters here after their make and serial number, so the name survives
+# unplugging and replugging (/dev/ttyUSB0 may become /dev/ttyUSB1)
+SERIAL_BY_ID = '/dev/serial/by-id'
+
+
+def byIdPorts():
+    """Stable names of the USB serial adapters: {'/dev/serial/by-id/usb-...': '/dev/ttyUSB0'}."""
+    links = {}
+    try:
+        names = sorted(os.listdir(SERIAL_BY_ID))
+    except OSError:
+        return links
+    for name in names:
+        path = SERIAL_BY_ID + '/' + name
+        links[path] = os.path.realpath(path)
+    return links
+
+
 def listComPorts():
-    ports = dict(name='ports', content=[])
-    for port in sorted(serial.tools.list_ports.comports(), key=lambda p: p.device):
-        ports['content'].append(port.device)
-    return ports
+    """The stable by-id name of each USB adapter, then the other ports (such as the Pi's own
+    UART). An adapter is listed once, under its stable name."""
+    links = byIdPorts()
+    aliased = set(links.values())
+    others = sorted(port.device for port in serial.tools.list_ports.comports()
+                    if port.device not in aliased)
+    return dict(name='ports', content=list(links) + others)
 
 
 def getBaudRate(t_port):
@@ -241,6 +262,12 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl):
         prev_percent = 0
 
         while globals.printing == True:
+
+            if globals.paused:
+                # Hold back the data (the plotter finishes what is in its buffer), but stay
+                # responsive to the stop button
+                time.sleep(0.1)
+                continue
 
             if flowControl == 'HP-IB':
                 data = hpgl.read(1)

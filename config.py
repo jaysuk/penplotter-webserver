@@ -14,7 +14,9 @@ else:
 
     config['tasmota'] = {
         'tasmota_enable': 'false',
-        'tasmota_ip': '192.168.1.101'
+        'tasmota_ip': '192.168.1.101',
+        'tasmota_on_delay': '2',
+        'tasmota_off_delay': '30'
     }
 
     config['timelapse'] = {

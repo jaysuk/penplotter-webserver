@@ -10,7 +10,28 @@
 - [x] Remote pi shutdown
 - [x] Add tasmota control in sidebar
 - [x] Update config.ini via web interface
+  - [x] Every setting in config.ini can be edited (login, timelapse included)
 - [x] Disable file deletion while printing
+- [x] Stop print via UI
+- [x] List current printing filename
+- [x] A refreshed page, or a second device, picks up a running plot (file, progress, log, stop)
+- [x] Pause / resume a plot
+- [x] Plot history (kept in history.db, survives restarts and installer updates)
+- [x] Tasmota: configurable wait before switching off (default 30 s) and after switching on (default 2 s); Stop skips the wait
+- [x] USB serial adapters are listed by their stable /dev/serial/by-id/ name
 
-- [ ] Stop print via UI?
-- [ ] List current printing filename
+Open:
+
+- [ ] Tasmota power off is a delay, not a check that the plotter is idle. I found no documented HP-GL
+      query that reliably says "finished drawing", so this needs real hardware to improve on.
+- [ ] Stop (`ESC.K` + `PU;`) and pause have not been tried on real hardware.
+- [ ] Timelapse: the settings exist in config.ini (and the UI) and there is a `/timelapse/<file>`
+      route, but nothing records anything. Implement it or remove it.
+- [ ] Page size filter per plotter (stub `updatePageSize` in main.js, not used). The convert dialog
+      also lacks the MP4200 device that the plot settings and config have.
+- [ ] Pi Plot shield buttons: the GPIO code in main.py is commented out and only logs a message.
+- [ ] The Telegram token is still sent back to the browser in clear text by `GET /save_configfile`
+      (the login password is not).
+- [ ] Plot queue (several files in a row). The history exists, a queue does not.
+- [ ] Plot history: no way to re-plot a file from a history row, and a deleted file stays listed by name.
+- [ ] More plotter options?

@@ -1,6 +1,7 @@
 venv/*
 node_modules/*
 config.ini
+history.db
 test/*
 cypress/fixtures/example.json
 cypress/plugins/index.js

@@ -307,6 +307,120 @@ function stopPlot() {
     });
 }
 
+function pausePlot() {
+  axios.post("/pause_plot").catch(function (error) {
+    notify(errorMessage(error), "danger");
+    console.error(error);
+  });
+}
+
+function resumePlot() {
+  axios.post("/resume_plot").catch(function (error) {
+    notify(errorMessage(error), "danger");
+    console.error(error);
+  });
+}
+
+// Log lines, shared by live events and the log replayed to a freshly opened page
+function appendStatusLog(text) {
+  jQuery("#statusLog").append(escapeHtml(text) + "<br>");
+  scrollLog();
+}
+
+function appendErrorLog(text) {
+  jQuery("#statusLog").append("<br>" + jQuery('<div class="error"/>').text(text).html());
+  scrollLog();
+}
+
+// Bring the plot view in line with the server: used when the page is opened or refreshed, or
+// connects from another device, while a plot is running, and when the plot is paused or resumed.
+function applyPlotState(state) {
+  jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
+  jQuery(".resumePlot").toggleClass("uk-hidden", !state.paused);
+
+  if (state.running && state.file) {
+    jQuery(".selectedFilename").text(state.file);
+  }
+  jQuery(".printProgress").val(state.progress || 0);
+  if (state.bytes_written !== undefined) {
+    jQuery("#bytes_written").text(state.bytes_written);
+  }
+
+  if (state.buffer_size) {
+    // Only restart the chart when it is not already showing this plotter's buffer
+    if (Number(state.buffer_size) !== Number(buffer_size)) {
+      buffer_size = state.buffer_size;
+      createTimeline();
+    }
+    jQuery("#chartContents").removeClass("hidden");
+  } else if (!state.running) {
+    jQuery("#chartContents").addClass("hidden");
+  }
+
+  // The log is only sent when connecting
+  if (state.log) {
+    jQuery("#statusLog").empty();
+    for (const entry of state.log) {
+      if (entry.type == "error") appendErrorLog(entry.text);
+      else appendStatusLog(entry.text);
+    }
+  }
+}
+
+// Plot history
+const HISTORY_LABELS = {
+  completed: "uk-label-success",
+  stopped: "uk-label-warning",
+  failed: "uk-label-danger",
+  interrupted: "uk-label-danger",
+  running: "",
+};
+
+function formatDuration(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return h + " h " + m + " min";
+  if (m > 0) return m + " min " + s + " s";
+  return s + " s";
+}
+
+function updateHistory() {
+  return axios
+    .get("/job_history")
+    .then(function (response) {
+      const rows = jQuery("#historyList").empty();
+      jQuery("#historyEmpty").toggleClass("uk-hidden", response.data.length > 0);
+      for (const job of response.data) {
+        const status = escapeHtml(job.status);
+        const label = HISTORY_LABELS[job.status] || "";
+        const title = job.error ? ` title="${escapeHtml(job.error)}"` : "";
+        const done = job.finished_at ? formatDuration(job.finished_at - job.started_at) : "";
+        const percent = job.status == "completed" || job.status == "running" ? "" : ` (${job.progress}%)`;
+        rows.append(
+          `<tr><td>${escapeHtml(new Date(job.started_at * 1000).toLocaleString())}</td>` +
+            `<td>${escapeHtml(job.file)}</td>` +
+            `<td><span class="uk-label ${label}"${title}>${status}</span>${escapeHtml(percent)}</td>` +
+            `<td>${escapeHtml(done)}</td></tr>`
+        );
+      }
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function clearHistory() {
+  axios
+    .post("/clear_history")
+    .then(updateHistory)
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      console.error(error);
+    });
+}
+
 // Reboot Pi
 function actionReboot() {
   axios
@@ -397,6 +511,16 @@ function actionOpenConfig() {
         jQuery("#telegram_chatid").val(response.data.telegram_chatid);
         jQuery("#tasmota_enable").val(response.data.tasmota_enable);
         jQuery("#tasmota_ip").val(response.data.tasmota_ip);
+        jQuery("#tasmota_on_delay").val(response.data.tasmota_on_delay);
+        jQuery("#tasmota_off_delay").val(response.data.tasmota_off_delay);
+        jQuery("#timelapse_enable").val(response.data.timelapse_enable);
+        jQuery("#timelapse_auto_start").val(response.data.timelapse_auto_start);
+        jQuery("#timelapse_preview").val(response.data.timelapse_preview);
+        jQuery("#auth_username").val(response.data.auth_username);
+        // The password is never sent to the browser; leaving the field empty keeps it
+        jQuery("#auth_password")
+          .val("")
+          .attr("placeholder", response.data.auth_password_set ? "Leave empty to keep the current password" : "");
         jQuery("#plotter_name").val(response.data.plotter_name);
         jQuery("#plotter_port").val(response.data.plotter_port).change();
         jQuery("#plotter_device").val(response.data.plotter_device).change();

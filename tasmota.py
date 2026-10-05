@@ -14,6 +14,24 @@ def _ip():
     return config.get('tasmota', 'tasmota_ip', fallback='').strip()
 
 
+def _delay(option, default):
+    """Seconds from config.ini, kept within 0..600."""
+    try:
+        return max(0, min(600, int(config.get('tasmota', option, fallback=str(default)).strip())))
+    except ValueError:
+        return default
+
+
+def on_delay():
+    """Seconds to let the plotter start up after it is switched on, before sending."""
+    return _delay('tasmota_on_delay', 2)
+
+
+def off_delay():
+    """Seconds to let the plotter finish drawing before it is switched off."""
+    return _delay('tasmota_off_delay', 30)
+
+
 def _send_command(socketio, command):
     """Send a Power command to the Tasmota device. Returns the response body, or False on failure."""
     ip = _ip()

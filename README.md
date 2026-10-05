@@ -53,10 +53,20 @@ http://{{your Raspberry-Pi IP address}}:5000
 ```
 
 Optional:
-Configure options in *config.ini* using the web interface to set:
-- Tasmota device IP.
-- Telegram Chat ID for notifications.
-- Timelapse Settings
+Configure options in *config.ini* using the web interface (settings icon, bottom of the sidebar). Everything in *config.ini* can be changed there:
+- Plotter name, default device, port, baud rate and flow control.
+- Telegram token and chat ID for notifications.
+- Tasmota device IP, and how long to wait after switching the plotter on and before switching it off.
+- Timelapse settings (stored, but not used by this version yet).
+- A login (see Security).
+
+The *Plot History* card lists recent plots with how they ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). It is kept in *history.db* next to *config.ini*, and an update keeps it.
+
+USB serial adapters are listed by their stable `/dev/serial/by-id/...` name, which does not change when the adapter is unplugged and plugged back in (unlike `/dev/ttyUSB0`). Prefer that entry for the default port. The Pi's own serial port (`/dev/ttyAMA0`) has no such name.
+
+The "Shutdown when plot is completed" option switches the plotter off through Tasmota after the *wait before switching off* (30 seconds by default, as the plotter can still be drawing when the last byte is sent). Press Stop during that wait to switch off at once.
+
+While a plot is running you can pause, resume or stop it. If you refresh the page, or open it on another device, it shows the file being plotted, the progress and the log so far, and the same buttons.
 
 ## Development
 
@@ -79,7 +89,7 @@ username = admin
 password = change-me
 ```
 
-Restart the service afterwards (`sudo systemctl restart webplotter`) or edit the file before the first start.
+You can also set or clear the login in the web interface (settings, Login). It applies immediately, no restart needed, and the password is never sent back to the browser. If you lock yourself out, delete the `[auth]` section from *config.ini* over SSH and restart the service (`sudo systemctl restart webplotter`).
 The login uses HTTP basic auth, so use it behind HTTPS if the network is not trusted.
 
 Custom vpype commands are run by vpype, so they can only contain letters, numbers, spaces and `. _ = + -`, and cannot use `eval`, `script`, `read`, `write`, `forfile`, `include` or `show`.
@@ -95,6 +105,8 @@ Set `WEBPLOTTER_DEBUG=1` to start Flask in debug mode (development only: it expo
 - [x] List current printing filename
 
 - [ ] More plotter options?
+
+See *ToDo.md* for the full list of open items.
 
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

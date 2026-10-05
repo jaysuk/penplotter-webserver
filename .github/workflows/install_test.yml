@@ -94,4 +94,5 @@ jobs:
             "$installer"
             test -f "$HOME/webplotter/uploads/columbia_A4.svg" || { echo "Update lost the uploads"; exit 1; }
             grep -q 'CI Plotter' "$HOME/webplotter/config.ini" || { echo "Update lost config.ini"; exit 1; }
+            test -f "$HOME/webplotter/history.db" || { echo "Update lost the plot history"; exit 1; }
             smoke_test
