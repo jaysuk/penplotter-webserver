@@ -32,19 +32,18 @@ Python webservice to simplify working with pen plotters:
 
 ## Installation
 
-This quick and easy easy install script is intended to be used with Raspibain OS.
-Currently, the following versions are supported:  
-
-Pi-OS Bullseye - 32 and 64 bit  
-Pi-OS Bookworm - 32 and 64 bit  
-Pi-OS Trixie - 64 bit  
+This quick and easy install script is intended to be used with Raspberry Pi OS (Bullseye, Bookworm or Trixie, 32 or 64 bit).
+It needs Python 3.9.2 or newer, and it installs from this repository's `PiPlot` branch whatever the OS version.
 
 From the home directory, run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/ithinkido/penplotter-webserver/PiPlot/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jaysuk/penplotter-webserver/PiPlot/install.sh | bash
 ```
 This will install the Pen Plotter Web Server and reboot the Raspberry Pi once installation is completed.
+Running it again updates an existing install and keeps your uploaded files and *config.ini*.
+
+Environment variables for the script: `WEBPLOTTER_REPO` and `WEBPLOTTER_BRANCH` install from another repository or branch, `WEBPLOTTER_NO_REBOOT=1` skips the reboot.
 
 ## Usage
 

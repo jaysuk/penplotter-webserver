@@ -1,9 +1,12 @@
-name: Run install scrpit
+name: Run install script
+
+# Installs the commit being tested on an emulated Raspberry Pi image, starts the web server,
+# converts an SVG through it, then runs the installer again to test the update path.
 
 on:
   workflow_dispatch:
   push:
-   branches:    
+    branches:
       - 'PiPlot'
 
 jobs:
@@ -16,76 +19,78 @@ jobs:
         board_name: [Zero_W, Zero_2W, Zero_2W_64bit]
         include:
         - board_name : Zero_W
-          arch: armv6l
           cpu: arm1176
           cpu_info: cpuinfo/raspberrypi_zero_w
           base_image: raspios_lite:latest
-          
+
         - board_name : Zero_2W
-          arch: armv7l
           cpu: cortex-a7
           cpu_info: cpuinfo/raspberrypi_zero2_w
           base_image: raspios_lite:latest
-          
-        - board_name : Zero_2W_64bit 
-          arch: aarch64
+
+        - board_name : Zero_2W_64bit
           cpu: cortex-a53
           cpu_info: cpuinfo/raspberrypi_zero2_w_arm64
           base_image: raspios_lite_arm64:latest
     steps:
     - uses: actions/checkout@v4
     - uses: pguyot/arm-runner-action@HEAD
-       
+
       with:
         base_image: ${{ matrix.base_image }}
         cpu: ${{ matrix.cpu }}
         image_additional_mb: 2048
         optimize_image: false
-        
-        # user: pi
-        
+        shell: /bin/bash
+
         commands: |
             echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-            ls -l /etc/apt/
-            sudo apt update && apt-get install -qq -y git > /dev/null
+            apt-get update && apt-get install -qq -y git curl wget > /dev/null
 
-            # Test first install
-            sed 's/sudo reboot/$HOME\/penplotter_venv\/bin\/python3 $HOME\/webplotter\/main.py \&\nsleep 10\npkill -f "$HOME\/penplotter_venv\/bin\/python3 $HOME\/webplotter\/main.py"/' install.sh > testinstall.sh
-            sed -i 's/-q //' testinstall.sh
-            chmod +x testinstall.sh
-            echo ""
-            echo ""
-            cat testinstall.sh &&
-            echo ""
-            echo ""           
-            echo -e "\e[32m Test first Install.\e[0m"
-            ./testinstall.sh
+            # Install the commit that is being tested, and do not reboot at the end
+            export WEBPLOTTER_REPO="https://github.com/${{ github.repository }}.git"
+            export WEBPLOTTER_BRANCH="${{ github.ref_name }}"
+            export WEBPLOTTER_NO_REBOOT=1
+            chmod +x install.sh
 
-            # Get test file 
-            echo -e "\e[32m Get File \e[0m"
+            # Start the server, convert an SVG through it and stop the server again
+            smoke_test() {
+                cd "$HOME/webplotter"
+                "$HOME/penplotter_venv/bin/python3" main.py > "$HOME/server.log" 2>&1 &
+                server_pid=$!
 
-            sudo wget -q -P "$HOME/webplotter/uploads/" https://raw.githubusercontent.com/ithinkido/PiPlot/main/images/columbia_A4.svg
-            # cp config.ini.sample config.ini          
+                # vpype is slow to import on an emulated Pi Zero, so be patient
+                started=""
+                for i in $(seq 1 90); do
+                    if curl -sf http://localhost:5000/ > /dev/null; then started=1; break; fi
+                    sleep 3
+                done
+                if [ -z "$started" ]; then
+                    echo "Server did not start"; cat "$HOME/server.log"; kill $server_pid; exit 1
+                fi
 
-            # Test exsiting install
-            echo -e "\e[32m Test exsiting Install.\e[0m"
-            ./testinstall.sh
- 
-      # - uses: cypress-io/github-action@v2
-      #   with:
-      #     start: python3 main.py, systemctl list-units --type=service --state=running ''
-      #     wait-on: http://localhost:5000
-      #     wait-on-timeout: 5
-      #     config-file: cypress.json
-          
-      # - uses: actions/upload-artifact@v1
-      #   if: always()
-      #   with:
-      #     name: cypress-videos
-      #     path: ./cypress/videos 
+                result=$(curl -sf -X POST -d file=columbia_A4.svg -d outputsize=a4 -d pageorientation=portrait -d device=hp7475a -d speed= http://localhost:5000/start_conversion) || result="request failed"
+                echo "Conversion result: $result"
+                case "$result" in
+                    Exported*) ;;
+                    *) echo "Conversion failed"; cat "$HOME/server.log"; kill $server_pid; exit 1 ;;
+                esac
 
-      # - uses: actions/upload-artifact@v1
-      #   if: always()
-      #   with:
-      #     name: cypress-screenshot
-      #     path: ./cypress/screenshots/webplot_test.spec.js/
+                kill $server_pid
+                wait $server_pid 2>/dev/null || true
+                cd "$HOME"
+            }
+
+            echo -e "\e[32m Test first install.\e[0m"
+            ./install.sh
+
+            # Add a user file and a changed setting, to check that an update keeps them
+            wget -q -P "$HOME/webplotter/uploads/" https://raw.githubusercontent.com/ithinkido/PiPlot/main/images/columbia_A4.svg
+            sed -i 's/^name = .*/name = CI Plotter/' "$HOME/webplotter/config.ini"
+            smoke_test
+
+            echo -e "\e[32m Test updating an existing install.\e[0m"
+            ./install.sh
+            test -f "$HOME/webplotter/uploads/columbia_A4.svg" || { echo "Update lost the uploads"; exit 1; }
+            grep -q 'CI Plotter' "$HOME/webplotter/config.ini" || { echo "Update lost config.ini"; exit 1; }
+            smoke_test

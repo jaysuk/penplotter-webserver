@@ -2,7 +2,9 @@
 
 dir="$HOME/webplotter"
 venv="$HOME/penplotter_venv"
-git="${WEBPLOTTER_REPO:-https://github.com/ithinkido/penplotter-webserver.git}"
+# The application runs unmodified on every supported Python version, so one branch serves all OS releases
+git="${WEBPLOTTER_REPO:-https://github.com/jaysuk/penplotter-webserver.git}"
+BRANCH="${WEBPLOTTER_BRANCH:-PiPlot}"
 
 #######################################################
 #######################################################
@@ -59,11 +61,6 @@ piversion="${VERSION_ID:-0}"
 if [[ "$piversion" -lt 11 ]]; then
     die "PiOS 11 (Bullseye) or newer is required for this script to work."
 fi
-
-# lsb_release is not installed on every image, so use os-release
-codename="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
-[ -n "$codename" ] || die "Could not determine the OS release name."
-BRANCH="${WEBPLOTTER_BRANCH:-${codename}_$(getconf LONG_BIT)}"
 
 echo ""
 echo "Updating apt. This will take a while..."
@@ -133,6 +130,10 @@ setup_service()
 reboot_pi()
 {
     printf "\033[?25h"
+    if [ -n "$WEBPLOTTER_NO_REBOOT" ]; then
+        echo "WEBPLOTTER_NO_REBOOT is set, not rebooting."
+        return
+    fi
     printf "Rebooting in 5 sec "
 
     (for i in $(seq 4 -1 1); do
@@ -171,7 +172,6 @@ if [ ! -d "$dir" ] ; then
 
     echo "Downloading Web Plotter for $BRANCH from Github"
     if git ls-remote --exit-code --heads "$git" "$BRANCH" > /dev/null; then
-        # DO NOT CHANGE without changing git actions
         git clone -q -b "$BRANCH" "$git" "$dir" || die "Download failed"
         echo -e "\e[32m Done.\e[0m"
     else
@@ -230,7 +230,6 @@ else
     new="$dir.new"
     old="$dir.old"
     rm -rf "$new" "$old"
-    # DO NOT CHANGE BRANCH NAME without changing git actions
     git clone -q -b "$BRANCH" "$git" "$new" || { rm -rf "$new"; die "Download failed, nothing was changed."; }
 
     # add user files back
