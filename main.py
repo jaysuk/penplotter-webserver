@@ -163,7 +163,13 @@ def make_tree(path):
                 tree['content'].append(make_tree(fn))
             else:
                 if (name != '.gitignore'):
-                    tree['content'].append(dict(name=name))
+                    entry = dict(name=name)
+                    try:
+                        stat = os.stat(fn)
+                        entry.update(size=stat.st_size, mtime=stat.st_mtime)
+                    except OSError:
+                        pass
+                    tree['content'].append(entry)
     return tree
 
 
@@ -565,6 +571,76 @@ def timelapse(filename):
 def update_files():
     files = make_tree(app.config['UPLOAD_PATH'])
     return files
+
+def folder_size(path):
+    """Bytes used by a folder and everything in it (0 if it does not exist)."""
+    total = 0
+    for folder, _, names in os.walk(path):
+        for name in names:
+            try:
+                total += os.path.getsize(os.path.join(folder, name))
+            except OSError:
+                pass
+    return total
+
+
+# How much room is left, and what the web plotter itself uses
+@app.route('/storage', methods=['GET'])
+def storage():
+    try:
+        usage = shutil.disk_usage(app.config['UPLOAD_PATH'])
+        disk = {'total': usage.total, 'used': usage.used, 'free': usage.free}
+    except OSError:
+        disk = {'total': None, 'used': None, 'free': None}
+    try:
+        history_bytes = os.path.getsize(history.DB_PATH)
+    except OSError:
+        history_bytes = 0
+    return jsonify(dict(disk, uploads=folder_size(app.config['UPLOAD_PATH']), cache=folder_size('cache'),
+                        history=history_bytes))
+
+
+# Delete the uploaded files that have not been touched for a number of days
+@app.route('/delete_old_files', methods=['POST'])
+def delete_old_files():
+    days = request.form.get('days', '')
+    if not re.fullmatch('[0-9]{1,4}', days) or int(days) < 1:
+        return 'Enter a number of days (1 or more)', 400
+    if globals.queue_active or not plot_lock.acquire(blocking=False):
+        return 'Files cannot be deleted while plotting', 409
+    try:
+        cutoff = time.time() - int(days) * 86400
+        deleted = []
+        for name in sorted(os.listdir(app.config['UPLOAD_PATH'])):
+            path = upload_file_path(name)
+            if not path or name == '.gitignore' or not os.path.isfile(path) or plot_queue.has_file(name):
+                continue        # the files waiting in the queue are not "old": they are about to be plotted
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    deleted.append(name)
+            except OSError:
+                pass
+    finally:
+        plot_lock.release()
+    if deleted:
+        socketio.emit('status_log', {'data': 'Deleted {} file{} older than {} days'.format(
+            len(deleted), '' if len(deleted) == 1 else 's', days)})
+    return jsonify(deleted)
+
+
+# Throw away what can be made again: analyses, previews and copies made for plotting
+@app.route('/clear_cache', methods=['POST'])
+def clear_cache():
+    if globals.queue_active or not plot_lock.acquire(blocking=False):
+        return 'The cache cannot be cleared while plotting', 409
+    try:
+        freed = folder_size('cache')
+        shutil.rmtree('cache', ignore_errors=True)
+    finally:
+        plot_lock.release()
+    return jsonify({'freed': freed})
+
 
 # List COM Ports
 @app.route('/update_ports', methods=['GET'])

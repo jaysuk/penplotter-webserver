@@ -73,11 +73,14 @@ function updateFiles() {
         // Remove old content from list
         jQuery("#fileList").html("");
 
+        const now = Date.now() / 1000;
         for (var content of response.data.content) {
+          const info = content.size === undefined ? "" : formatBytes(content.size) + ", " + formatAge(now - content.mtime);
           jQuery("#fileList").append(
-            `<li> ${renderFileListElement(content.name)} </li>`
+            `<li> ${renderFileListElement(content.name, info)} </li>`
           );
         }
+        updateStorage(response.data.content);
       }
     })
     .catch(function (error) {
@@ -85,6 +88,64 @@ function updateFiles() {
       console.error(error);
     })
     .then(function () {});
+}
+
+// Room left on the disk, and what the web plotter uses
+var uploadedFiles = [];
+
+function updateStorage(files) {
+  if (files) uploadedFiles = files;
+  return axios
+    .get("/storage")
+    .then(function (response) {
+      const s = response.data;
+      const disk = s.total === null ? "" : formatBytes(s.free) + " free of " + formatBytes(s.total) + ". ";
+      jQuery("#storageInfo").text(
+        disk + "Files " + formatBytes(s.uploads) + ", cache " + formatBytes(s.cache) + ", history " + formatBytes(s.history) + "."
+      );
+      // Running low is worth a warning colour
+      jQuery("#storageInfo").toggleClass("uk-text-danger", s.total !== null && s.free < 200 * 1024 * 1024);
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function deleteOldFiles() {
+  const days = parseInt(jQuery("#oldDays").val(), 10);
+  if (!(days >= 1)) {
+    notify("Enter a number of days (1 or more)", "danger");
+    return;
+  }
+  const cutoff = Date.now() / 1000 - days * 86400;
+  const old = uploadedFiles.filter((file) => file.mtime !== undefined && file.mtime < cutoff);
+  if (old.length === 0) {
+    notify("No files are older than " + days + " days", "primary");
+    return;
+  }
+  UIkit.modal.confirm("Delete " + old.length + " file" + (old.length === 1 ? "" : "s") + " older than " + days + " days? Files waiting in the queue are kept.").then(function () {
+    axios
+      .post("/delete_old_files", new URLSearchParams({ days: days }))
+      .then(function (response) {
+        notify("Deleted " + response.data.length + " file" + (response.data.length === 1 ? "" : "s"), "success");
+        updateFiles();
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+      });
+  }, function () {});
+}
+
+function clearCache() {
+  axios
+    .post("/clear_cache")
+    .then(function (response) {
+      notify("Freed " + formatBytes(response.data.freed), "success");
+      updateStorage();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
 }
 
 // Handle file selection

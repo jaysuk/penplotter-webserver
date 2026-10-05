@@ -182,6 +182,21 @@
               <div class="chart-container uk-panel uk-panel-scrollable">
                 <ul id="fileList" class="uk-list uk-list-divider"></ul>
               </div>
+              <p id="storageInfo" class="uk-text-small uk-text-muted uk-margin-small-top uk-margin-remove-bottom"></p>
+              <div class="uk-grid-small uk-flex-middle uk-margin-small-top" data-uk-grid>
+                <div class="uk-width-auto"><span class="uk-text-small">Delete files older than</span></div>
+                <div class="uk-width-auto">
+                  <input id="oldDays" class="uk-input uk-form-small uk-form-width-xsmall" type="number" min="1" max="3650" value="30">
+                </div>
+                <div class="uk-width-auto"><span class="uk-text-small">days</span></div>
+                <div class="uk-width-auto">
+                  <button class="uk-button uk-button-default uk-button-small deleteOldFiles lock-edit" type="button">Delete</button>
+                </div>
+                <div class="uk-width-expand uk-text-right">
+                  <button class="uk-button uk-button-default uk-button-small clearCache lock-edit" type="button"
+                    title="Remove analyses, previews and other copies that are made again when needed">Clear cache</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1582,6 +1597,16 @@
       jQuery(document).on('click', '.updateHistory', function (e) {
         e.preventDefault();
         updateHistory();
+      });
+
+      jQuery(document).on('click', '.deleteOldFiles', function (e) {
+        e.preventDefault();
+        deleteOldFiles();
+      });
+
+      jQuery(document).on('click', '.clearCache', function (e) {
+        e.preventDefault();
+        clearCache();
       });
 
       // Plot queue
