@@ -9,49 +9,155 @@ BRANCH="${WEBPLOTTER_BRANCH:-PiPlot}"
 #######################################################
 #######################################################
 
-# Always give the cursor back, however the script ends
-trap 'printf "\033[?25h"' EXIT
-printf "\033[?25l"
+# Colours and cursor control only when talking to a terminal (the CI run is not one)
+if [ -t 1 ]; then
+    BOLD=$'\e[1m'; DIM=$'\e[2m'; RED=$'\e[31m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; CYAN=$'\e[36m'; RESET=$'\e[0m'
+    ISTTY=1
+else
+    BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; CYAN=""; RESET=""
+    ISTTY=0
+fi
+
+# Everything the installed tools print goes in here, and is shown if a step fails
+LOG="${WEBPLOTTER_LOG:-$HOME/webplotter-install.log}"
+: > "$LOG" 2>/dev/null || LOG=/dev/null
+
+SUDO_KEEPALIVE=""
+STEP=0
+TOTAL=0
+
+# Always give the cursor back and stop the sudo keepalive, however the script ends
+cleanup()
+{
+    [ -n "$SUDO_KEEPALIVE" ] && kill "$SUDO_KEEPALIVE" 2>/dev/null
+    [ "$ISTTY" -eq 1 ] && printf '\033[?25h'
+}
+trap cleanup EXIT
+trap 'echo ""; echo "Interrupted."; exit 130' INT TERM
 
 die()
 {
-    echo -e "\e[1;31m $1\e[0m" >&2
+    echo "${BOLD}${RED} $1${RESET}" >&2
+    [ "$LOG" != /dev/null ] && echo "${DIM} Full log: $LOG${RESET}" >&2
     exit 1
 }
 
-# Show a spinner while a background process runs
-spinner()
+banner()
 {
-    local pid=$1
-    local spinstr='|/-\'
-    while kill -0 "$pid" 2>/dev/null; do
-        local temp=${spinstr#?}
-        printf " [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep 1
-        printf "\b\b\b\b\b\b"
-    done
-    printf "    \b\b\b\b"
+    printf '%s' "$CYAN"
+    cat <<'EOF'
+
+ ____  _ ____  _       _
+|  _ \(_)  _ \| | ___ | |_
+| |_) | | |_) | |/ _ \| __|
+|  __/| |  __/| | (_) | |_
+|_|   |_|_|   |_|\___/ \__|
+EOF
+    printf '%s' "$RESET"
+    echo "${DIM} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ o${RESET}"
+    echo "${BOLD} Pen plotter web server installer${RESET}"
+    echo ""
+    echo " This can take 10-20 minutes on a Raspberry Pi Zero. While a spinner and"
+    echo " a timer are moving, it is working and has not got stuck."
+    echo " Details are written to ${BOLD}$LOG${RESET}"
 }
 
-# Run a command quietly with a spinner. Returns the exit status of the command itself.
+# Print a numbered heading for the next stage
+step()
+{
+    STEP=$((STEP + 1))
+    echo ""
+    echo "${BOLD}${CYAN}[$STEP/$TOTAL]${RESET}${BOLD} $1${RESET}"
+}
+
+ok()   { echo "  ${GREEN}[ ok ]${RESET} $1"; }
+warn() { echo "  ${YELLOW}[warn]${RESET} $1"; }
+note() { echo "  $1"; }
+
+fmt_time()
+{
+    if [ "$1" -ge 60 ]; then
+        printf '%dm%02ds' $(($1 / 60)) $(($1 % 60))
+    else
+        printf '%ds' "$1"
+    fi
+}
+
+# Draw a spinner with the elapsed time while a background process runs
+# $1: pid  $2: label  $3: $SECONDS at start
+spinner()
+{
+    local pid=$1 label=$2 start=$3
+    local frames='|/-\' i=0 secs hint
+    while kill -0 "$pid" 2>/dev/null; do
+        secs=$((SECONDS - start))
+        hint=""
+        [ "$secs" -ge 90 ] && hint=" - still working, this is normal"
+        printf '\r\033[K  %s%s%s %s %s(%s%s)%s' "$CYAN" "${frames:i%4:1}" "$RESET" "$label" "$DIM" "$(fmt_time "$secs")" "$hint" "$RESET"
+        i=$((i + 1))
+        sleep 0.2
+    done
+    printf '\r\033[K'
+}
+
+# Run a command in the background with a spinner, logging its output.
+# Returns the exit status of the command itself; on failure the end of the log is shown.
 run_spin()
 {
-    "$@" > /dev/null 2>&1 &
+    local label=$1
+    shift
+    local start=$SECONDS rc
+    printf '\n=== %s\n$ %s\n' "$label" "$*" >> "$LOG"
+    "$@" >> "$LOG" 2>&1 < /dev/null &
     local pid=$!
-    spinner $pid
-    wait $pid
+    if [ "$ISTTY" -eq 1 ]; then
+        spinner "$pid" "$label" "$start"
+    else
+        note "$label ..."
+    fi
+    wait "$pid"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo "  ${GREEN}[ ok ]${RESET} $label ${DIM}($(fmt_time $((SECONDS - start))))${RESET}"
+    else
+        echo "  ${RED}[fail]${RESET} $label ${DIM}($(fmt_time $((SECONDS - start))))${RESET}"
+        if [ "$LOG" != /dev/null ]; then
+            echo "${DIM}  --- end of $LOG ---"
+            tail -n 15 "$LOG" | sed 's/^/  | /'
+            echo "  ---${RESET}"
+        fi
+    fi
+    return "$rc"
 }
+
+# Ask for the sudo password now, in the foreground where it can be seen, and keep it
+# fresh for the rest of the install. A password prompt hidden behind a spinner looks
+# exactly like a hang.
+ensure_sudo()
+{
+    if ! sudo -n true 2>/dev/null; then
+        note "Some steps need administrator rights."
+        note "${BOLD}Please type your password now${RESET} (nothing is shown as you type):"
+        sudo -v || die "Could not get administrator rights. Run this from a terminal, as a user that can use sudo."
+    fi
+    ok "Administrator rights"
+    ( while kill -0 "$$" 2>/dev/null; do sudo -n -v 2>/dev/null; sleep 50; done ) &
+    SUDO_KEEPALIVE=$!
+    [ "$ISTTY" -eq 1 ] && printf '\033[?25l'
+}
+
+banner
 
 #System Info
 . /etc/os-release 2>/dev/null
-echo -e "\e[1m${PRETTY_NAME:-unknown OS}\e[0m"
-echo -e "\e[1m$(getconf LONG_BIT)-bit OS\e[0m"
+echo ""
+echo "${BOLD} System${RESET}"
+note "${PRETTY_NAME:-unknown OS}, $(getconf LONG_BIT)-bit"
 
 if ! command -v python3 &>/dev/null; then
     die "Python 3 is not installed."
 fi
-echo -e "\e[1m$(python3 -V)\e[0m"
+note "$(python3 -V)"
 if [[ $(python3 -c 'import sys; print(sys.version_info >= (3, 9, 2))') != True ]]; then
     die "Python version 3.9.2 or newer is required."
 fi
@@ -62,30 +168,38 @@ if [[ "$piversion" -lt 11 ]]; then
     die "PiOS 11 (Bullseye) or newer is required for this script to work."
 fi
 
-echo ""
-echo "Updating apt. This will take a while..."
-run_spin sudo apt-get update -qq
-echo -e "\e[32m Done.\e[0m"
+if [ -d "$dir" ]; then
+    note "Existing install found in $dir: this will be an update"
+    TOTAL=6
+else
+    note "No existing install: this will be a fresh install"
+    TOTAL=8
+fi
+
+step "Checking administrator access"
+ensure_sudo
+
+step "Updating the list of available software"
+note "${DIM}Slow on a first run, or while the Pi is still doing its own updates.${RESET}"
+run_spin "apt update" sudo apt-get update -qq -o DPkg::Lock::Timeout=300 || warn "apt update failed, carrying on with what is already known"
 
 # Install python packages listed in requirements.txt into the active venv.
 # $1: "" for a fresh install, "--upgrade" when updating
 install_requirements()
 {
     local upgrade="$1"
-    local line
+    local line n=0 total
     local -a args
+    total=$(grep -c -v -E '^[[:space:]]*(#|$)' "$dir/requirements.txt")
     while IFS= read -r line || [ -n "$line" ]; do
         # skip blank lines and comments
         [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
         read -r -a args <<< "$line"
-        echo "Installing ${args[*]}"
-        if run_spin python3 -m pip install --prefer-binary $upgrade "${args[@]}"; then
-            echo -e "\e[32m ${args[*]} was installed successfully.\e[0m"
-        else
-            echo -e "\e[31m Failed to install ${args[*]}.\e[0m"
+        n=$((n + 1))
+        # vpype pulls in numpy, scipy and others, which can take many minutes on a Pi Zero
+        if ! run_spin "Python package $n/$total: ${args[*]}" python3 -m pip install --prefer-binary $upgrade "${args[@]}"; then
             failed_packages=1
         fi
-        echo ""
     done < "$dir/requirements.txt"
 }
 
@@ -94,19 +208,16 @@ setup_service()
 {
     current_user=$(whoami)
     if [ "$current_user" != "pi" ]; then
-        echo -e "\e[33m Fix user define\e[0m"
-        echo "Setup user '$current_user' in webplotter.service"
+        note "Setting the service up for user '$current_user' instead of 'pi'"
         sed -i -e "s#^User=pi\$#User=$current_user#" -e "s#/home/pi/#$HOME/#g" "$dir/webplotter.service"
-        echo ""
     fi
 
-    echo "Setup auto start for Web Plotter on boot"
     sudo cp "$dir/webplotter.service" /etc/systemd/system/
     sudo systemctl daemon-reload
     if sudo systemctl enable webplotter --quiet; then
-        echo "WebPlotter startup service enabled."
+        ok "Web Plotter will start on boot"
     else
-        echo "Error: Failed to enable WebPlotter service!" >&2
+        echo "  ${RED}[fail]${RESET} Failed to enable the WebPlotter service!" >&2
     fi
 
     # systemd is not running inside containers / chroots (e.g. the CI image)
@@ -115,26 +226,28 @@ setup_service()
         sleep 2
         if sudo systemctl is-active --quiet webplotter; then
             IP_ADDRESS=$(hostname -I | awk '{print $1}')
-            echo -e "\e[1m After reboot - Web plotter can be found at http://$IP_ADDRESS:5000\e[0m"
+            ok "Web Plotter is running"
             echo ""
+            echo "${BOLD}${GREEN} All done!${RESET} Web plotter can be found at ${BOLD}http://$IP_ADDRESS:5000${RESET}"
         else
-            echo -e "\e[1;31m Something has gone wrong..... The last log lines:\e[0m"
+            echo "${BOLD}${RED} Something has gone wrong..... The last log lines:${RESET}"
             sudo journalctl -u webplotter -n 30 --no-pager
             exit 1
         fi
     else
-        echo -e "\e[33m systemd is not running, skipping service start.\e[0m"
+        warn "systemd is not running, skipping service start."
     fi
 }
 
 reboot_pi()
 {
-    printf "\033[?25h"
+    [ "$ISTTY" -eq 1 ] && printf '\033[?25h'
     if [ -n "$WEBPLOTTER_NO_REBOOT" ]; then
-        echo "WEBPLOTTER_NO_REBOOT is set, not rebooting."
+        echo " WEBPLOTTER_NO_REBOOT is set, not rebooting."
         return
     fi
-    printf "Rebooting in 5 sec "
+    echo ""
+    printf " Rebooting in 5 sec "
 
     (for i in $(seq 4 -1 1); do
         sleep 1;
@@ -142,7 +255,7 @@ reboot_pi()
     done;)
     echo ""
     echo ""
-    echo "Rebooting"
+    echo " Rebooting"
     sleep 1
     sudo reboot
 }
@@ -151,58 +264,47 @@ failed_packages=0
 
 ## Check for dir, if not found do a fresh install ##
 if [ ! -d "$dir" ] ; then
-    echo ""
 
-    echo "Installing apt packages"
-
+    step "Installing system packages"
+    note "${DIM}git, python venv, libgeos, hp2xx and friends${RESET}"
     # libgeos-dev pulls in the matching libgeos runtime library for each release
-    if run_spin env LC_ALL=C LANG=C sudo apt-get install -qq -y \
+    run_spin "apt install" env DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C sudo apt-get install -qq -y \
+            -o DPkg::Lock::Timeout=300 \
             git \
             python3-pip \
             libopenblas-dev \
             libgeos-dev \
             python3-venv \
             libssl-dev \
-            hp2xx; then
-        echo -e "\e[32m Packages installed successfully.\e[0m"
-    else
-        die "Error: Failed to install packages. Exiting"
-    fi
-    echo ""
+            hp2xx || die "Failed to install system packages. Exiting"
 
-    echo "Downloading Web Plotter for $BRANCH from Github"
-    if git ls-remote --exit-code --heads "$git" "$BRANCH" > /dev/null; then
-        git clone -q -b "$BRANCH" "$git" "$dir" || die "Download failed"
-        echo -e "\e[32m Done.\e[0m"
+    step "Downloading Web Plotter ($BRANCH branch) from GitHub"
+    if run_spin "Checking the $BRANCH branch exists" env GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads "$git" "$BRANCH"; then
+        run_spin "Downloading to $dir" env GIT_TERMINAL_PROMPT=0 git clone -q -b "$BRANCH" "$git" "$dir" || die "Download failed"
     else
-        die "Branch $BRANCH does not exist"
+        die "Branch $BRANCH does not exist, or GitHub could not be reached"
     fi
-    echo ""
 
-    echo "Creating python venv"
-    python3 -m venv "$venv" || die "Could not create the virtual environment."
+    step "Creating the Python virtual environment"
+    run_spin "python3 -m venv" python3 -m venv "$venv" || die "Could not create the virtual environment."
     source "$venv/bin/activate"
     if [ -n "$VIRTUAL_ENV" ]; then
-        echo -e "\e[32m Pen plotter web server venv has been activated.\e[0m"
-        echo " Path: $VIRTUAL_ENV"
+        note "Active: $VIRTUAL_ENV"
     else
         die "Virtual environment could not be activated."
     fi
-    echo ""
 
-    echo "Fix pip certs"
-    run_spin python3 -m pip install pip_system_certs -q
-    echo -e "\e[32m Done.\e[0m"
-    echo ""
-
+    step "Installing Python packages"
+    note "${DIM}The slowest step, especially vpype. A Pi Zero may need 10+ minutes here.${RESET}"
+    run_spin "Fixing pip certificates" python3 -m pip install pip_system_certs -q
     install_requirements ""
     [ "$failed_packages" -eq 0 ] || die "Some python packages failed to install. Exiting"
 
-    echo "Preapre penplotter webserver config"
+    step "Preparing the web plotter config"
     cp "$dir/config.ini.sample" "$dir/config.ini"
-    echo -e "\e[32m Done.\e[0m"
-    echo ""
+    ok "config.ini created"
 
+    step "Setting up the service"
     setup_service
 
     reboot_pi
@@ -214,58 +316,57 @@ if [ ! -d "$dir" ] ; then
 
 
 else
-    echo ""
-    echo -e "\e[32m Directory $dir already exists\e[0m"
-    echo ""
+    step "Downloading the latest version ($BRANCH branch)"
     if [ ! -d "$venv/" ]; then
-        echo -e "\e[33m Looks like you do not have a penplotter_venv virtual environment.\e[0m"
-        echo " Let's take care of that."
-        python3 -m venv "$venv" || die "Could not create the virtual environment."
+        warn "No penplotter_venv virtual environment found, creating one."
+        run_spin "python3 -m venv" python3 -m venv "$venv" || die "Could not create the virtual environment."
     fi
 
-    echo "Updating pen plotter web server"
-    git ls-remote --exit-code --heads "$git" "$BRANCH" > /dev/null || die "Branch $BRANCH does not exist"
+    run_spin "Checking the $BRANCH branch exists" env GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads "$git" "$BRANCH" || die "Branch $BRANCH does not exist, or GitHub could not be reached"
 
     # Download into a new directory first so a failed download can't destroy the working install
     new="$dir.new"
     old="$dir.old"
     rm -rf "$new" "$old"
-    git clone -q -b "$BRANCH" "$git" "$new" || { rm -rf "$new"; die "Download failed, nothing was changed."; }
+    run_spin "Downloading to $new" env GIT_TERMINAL_PROMPT=0 git clone -q -b "$BRANCH" "$git" "$new" || { rm -rf "$new"; die "Download failed, nothing was changed."; }
 
+    step "Keeping your uploads and settings"
     # add user files back
     if [ -d "$dir/uploads" ]; then
         rm -rf "$new/uploads"
         cp -a "$dir/uploads" "$new/uploads" || { rm -rf "$new"; die "Could not copy your uploads, nothing was changed."; }
+        ok "uploads kept"
     else
-        echo -e "\e[33m $dir/uploads/ does not exist. No files moved.\e[0m"
+        warn "$dir/uploads/ does not exist. No files moved."
     fi
     if [ -e "$dir/config.ini" ]; then
         cp -a "$dir/config.ini" "$new/config.ini" || { rm -rf "$new"; die "Could not copy your config.ini, nothing was changed."; }
+        ok "config.ini kept"
     else
         cp "$new/config.ini.sample" "$new/config.ini"
+        ok "config.ini created"
     fi
 
     sudo systemctl stop webplotter 2>/dev/null
     mv "$dir" "$old" && mv "$new" "$dir" || die "Could not replace $dir. Your old install is in $old"
-    echo ""
+    ok "New version in place"
 
+    step "Updating Python packages"
     source "$venv/bin/activate"
     if [ -n "$VIRTUAL_ENV" ]; then
-        echo -e "\e[32m Pen plotter web server venv has been activated.\e[0m"
-        echo "Path: $VIRTUAL_ENV"
+        note "Active: $VIRTUAL_ENV"
     else
         die "Virtual environment could not be activated. Your old install is in $old"
     fi
-    echo ""
-
-    run_spin python3 -m pip install --upgrade pip_system_certs
+    run_spin "Fixing pip certificates" python3 -m pip install --upgrade pip_system_certs
     install_requirements "--upgrade"
     if [ "$failed_packages" -ne 0 ]; then
-        echo -e "\e[33m Some packages failed to update. Your old install is kept in $old\e[0m"
+        warn "Some packages failed to update. Your old install is kept in $old"
     else
         rm -rf "$old"
     fi
 
+    step "Restarting the service"
     sudo rm -f /etc/systemd/system/webplotter.service
     setup_service
 
