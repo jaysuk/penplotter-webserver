@@ -23,6 +23,7 @@ import history
 import hpgl_analysis
 import notification
 import plotter_control
+import presets
 import send2serial
 import tasmota
 from convert_vpype import convert_file, output_name
@@ -31,6 +32,7 @@ from config import config
 
 globals.initialize()
 history.init()
+presets.init()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
@@ -219,6 +221,18 @@ def conversion_options(form):
         'linesimplify': bool(form.get('linesimplify')), 'reloop': bool(form.get('reloop')),
         'mirror_x': bool(form.get('mirror_x')), 'mirror_y': bool(form.get('mirror_y')),
     }, None
+
+
+def preset_form(options):
+    """Validated options as the convert form holds them, to be stored in a preset."""
+    return {
+        'outputsize': options['outputsize'], 'pageorientation': options['pageorientation'],
+        'device': options['device'], 'speed': options['speed'], 'command_input': options['custom_comand'],
+        'margin': '{:g}'.format(options['margin']), 'rotate': str(options['rotate']),
+        'linemerge': options['linemerge'], 'linesort': options['linesort'],
+        'linesimplify': options['linesimplify'], 'reloop': options['reloop'],
+        'mirror_x': options['mirror_x'], 'mirror_y': options['mirror_y'],
+    }
 
 
 def run_conversion(file, options, output=None):
@@ -668,6 +682,32 @@ def pause_plot():
 @app.route('/resume_plot', methods=['POST'])
 def resume_plot():
     return set_paused(False)
+
+# Saved sets of conversion options
+@app.route('/presets', methods=['GET'])
+def list_presets():
+    return jsonify(presets.all())
+
+
+@app.route('/presets', methods=['POST'])
+def save_preset():
+    name = (request.form.get('name') or '').strip()
+    options, error = conversion_options(request.form)
+    if error:
+        return error, 400
+    error = presets.save(name, preset_form(options))
+    if error:
+        return error, 400
+    return 'Saved preset ' + name
+
+
+@app.route('/presets/delete', methods=['POST'])
+def delete_preset():
+    name = request.form.get('name') or ''
+    if not presets.delete(name):
+        return 'No such preset', 404
+    return 'Deleted preset ' + name
+
 
 # Start converting file using vpype
 @app.route('/start_conversion', methods=['POST'])

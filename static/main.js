@@ -291,7 +291,86 @@ function updatePageSize(element) {
 function convertFileModal(element) {
   const filename = jQuery(element).attr("data-filename");
   jQuery("#convertFile").val(filename);
+  updatePresets();
   UIkit.modal("#modal-convertFile").show();
+}
+
+// Conversion presets: named sets of the options in the convert dialog
+var presetOptions = {};
+
+function updatePresets(selected) {
+  return axios
+    .get("/presets")
+    .then(function (response) {
+      const list = jQuery("#presetList").empty();
+      jQuery("<option/>", { value: "", text: response.data.length ? "Choose a preset..." : "No presets saved" }).appendTo(list);
+      presetOptions = {};
+      for (const preset of response.data) {
+        presetOptions[preset.name] = preset.options;
+        jQuery("<option/>", { value: preset.name, text: preset.name }).appendTo(list);
+      }
+      list.val(selected && presetOptions[selected] ? selected : "");
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function applyPreset(name) {
+  const options = presetOptions[name];
+  if (!options) return;
+
+  const custom = jQuery("#use_custom_command");
+  // Leave custom command mode first, so the optimisation boxes can be set
+  if (custom.prop("checked") && !options.command_input) {
+    custom.prop("checked", false).trigger("change");
+  }
+  for (const key in options) {
+    const field = jQuery("#convertData [name='" + key + "']");
+    if (field.is(":checkbox")) field.prop("checked", !!options[key]);
+    else field.val(options[key]);
+  }
+  if (options.command_input && !custom.prop("checked")) {
+    custom.prop("checked", true).trigger("change");
+    jQuery("#command_input").val(options.command_input);
+  }
+}
+
+function savePreset() {
+  UIkit.modal.prompt("Name for this set of options:", jQuery("#presetList").val() || "").then(function (name) {
+    name = (name || "").trim();
+    if (!name) return;
+    axios
+      .post("/presets", jQuery("#convertData").serialize() + "&name=" + encodeURIComponent(name))
+      .then(function (response) {
+        notify(response.data, "success");
+        return updatePresets(name);
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+        console.error(error);
+      });
+  });
+}
+
+function deletePreset() {
+  const name = jQuery("#presetList").val();
+  if (!name) {
+    notify("Choose a preset to delete", "warning");
+    return;
+  }
+  UIkit.modal.confirm("Delete the preset " + name + "?").then(function () {
+    axios
+      .post("/presets/delete", new URLSearchParams({ name: name }).toString())
+      .then(function (response) {
+        notify(response.data, "warning");
+        return updatePresets();
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+        console.error(error);
+      });
+  }, function () {});
 }
 
 // Convert without keeping the result, and show it

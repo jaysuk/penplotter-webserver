@@ -40,6 +40,13 @@ def _add_missing_columns(conn):
             conn.execute('ALTER TABLE jobs ADD COLUMN {} {}'.format(name, kind))
 
 
+@contextlib.contextmanager
+def database():
+    """A locked connection, for modules that keep their own tables in history.db."""
+    with _lock, _connect() as conn:
+        yield conn
+
+
 def init():
     """Create the table. A plot still marked running was cut short by a restart or power loss."""
     try:

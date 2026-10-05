@@ -557,6 +557,21 @@
               </div>
             </div>
 
+            <div class="uk-width-1-1@s">
+              <label class="uk-form-label" for="presetList">Preset</label>
+              <div class="uk-grid uk-grid-small uk-margin-small" data-uk-grid>
+                <div class="uk-width-expand">
+                  <select id="presetList" class="uk-select"></select>
+                </div>
+                <div class="uk-width-auto">
+                  <button class="uk-button uk-button-default savePreset" type="button"
+                    title="Save the options below as a preset">Save</button>
+                  <button class="uk-button uk-button-default deletePreset" type="button"
+                    title="Delete the chosen preset">Delete</button>
+                </div>
+              </div>
+            </div>
+
             <div class="uk-width-1-2@s">
               <label class="uk-form-label" for="form-stacked-text"> Plotter Device</label>
               <div class="uk-margin-small">
@@ -1165,6 +1180,21 @@
           }
       });
 
+
+      // Conversion presets
+      jQuery(document).on('change', '#presetList', function () {
+        applyPreset(jQuery(this).val());
+      });
+
+      jQuery(document).on('click', '.savePreset', function (e) {
+        e.preventDefault();
+        savePreset();
+      });
+
+      jQuery(document).on('click', '.deletePreset', function (e) {
+        e.preventDefault();
+        deletePreset();
+      });
 
       // Preview a conversion, keep it, or go back to the options
       jQuery(document).on('click', '.startPreview', function (e) {
