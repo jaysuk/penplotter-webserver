@@ -13,10 +13,18 @@ class Serial:
     fail_open = False     # make opening raise SerialException
     no_reply = False      # read() returns nothing (plotter not answering)
     on_data = None        # called with (port, data) for every chunk of plot data written
+    break_at = None       # the next port raises SerialException on its Nth write (an unplugged cable)
+    open_failures = 0     # the next N attempts to open a port fail (the adapter is not back yet)
+    failures_after_break = 0   # open_failures is set to this when a port breaks
 
     def __init__(self, *args, **kwargs):
         if Serial.fail_open:
             raise SerialException('could not open port')
+        if Serial.open_failures > 0:
+            Serial.open_failures -= 1
+            raise SerialException('could not open port')
+        self.writes_left = Serial.break_at
+        Serial.break_at = None
         self.kwargs = kwargs
         self.baudrate = kwargs.get('baudrate')
         self.buf = b''
@@ -25,6 +33,11 @@ class Serial:
         Serial.instances.append(self)
 
     def write(self, data):
+        if self.writes_left is not None:
+            self.writes_left -= 1
+            if self.writes_left < 0:
+                Serial.open_failures = Serial.failures_after_break
+                raise SerialException('device disconnected')
         self.written.append(data)
         # Answer the queries send2serial makes: buffer size, buffer space, plotter id
         if data in (b'\033.L', b'\033.B'):
@@ -70,6 +83,9 @@ def reset():
     Serial.fail_open = False
     Serial.no_reply = False
     Serial.on_data = None
+    Serial.break_at = None
+    Serial.open_failures = 0
+    Serial.failures_after_break = 0
 
 
 def make_modules():

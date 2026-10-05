@@ -35,4 +35,5 @@ Open:
 - [x] Plot queue: several files in a row, with an optional paper change between them. Stop holds it. Untested on a real plotter, like the other plot control.
 - [x] Plot history: "Plot again" from a history row (a deleted file stays listed by name, without the button)
 - [x] Resume a stopped or failed plot from the history (carries on from the byte the plotter reached; untested on hardware)
+- [x] A dropped serial connection holds the plot and offers to reconnect and continue (untested on hardware)
 - [ ] More plotter options?

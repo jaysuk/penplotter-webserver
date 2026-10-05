@@ -261,7 +261,7 @@ class PlotEvents:
     def emit(self, name, data=None, **kwargs):
         globals.record_event(name, data)
         socketio.emit(name, data, **kwargs)
-        if name == 'pen_change':
+        if name in ('pen_change', 'wait_change'):
             broadcast_plot_state()      # the sender paused the plot: tell every page
 
 
@@ -878,6 +878,8 @@ def stop_plot():
 def set_paused(paused):
     if not plot_lock.locked():
         return 'No plot is running', 409
+    if not paused and globals.paused and globals.wait_reason == 'disconnected':
+        return 'The plotter is not connected yet', 409
     if globals.paused != paused:
         if paused:
             globals.paused = True

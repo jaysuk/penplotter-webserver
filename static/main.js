@@ -641,6 +641,18 @@ const WAIT_NOTICES = {
     resume: "Resume",
     stop: "Stop plot",
   },
+  disconnected: {
+    title: "Lost the connection to the plotter",
+    text: () => "The plot is held. The server keeps trying to connect again (check the cable, the adapter and that the plotter is on). Stop gives the plot up.",
+    resume: "",
+    stop: "Stop plot",
+  },
+  reconnect: {
+    title: "The plotter is back",
+    text: () => "Check that the paper and the pen carriage have not moved, and that the right pen is loaded. Resume carries on from a little before where the connection dropped, so the last strokes may be drawn twice.",
+    resume: "Resume",
+    stop: "Stop plot",
+  },
   paper_change: {
     title: "Change the paper",
     text: () => "Take out the finished sheet and load the next one, then press Resume to plot the next file in the queue.",

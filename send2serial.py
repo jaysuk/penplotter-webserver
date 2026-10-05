@@ -220,6 +220,97 @@ def run_commands(socketio, port, baud, flowControl, commands, query=None):
 
 ETA_EVERY = 5   # seconds between time left updates (they are also sent when the percentage moves)
 
+# Seconds between attempts to open the port again after the connection dropped (the last one repeats),
+# and how long to try before the plot is given up
+RECONNECT_DELAYS = (1, 2, 5, 10)
+RECONNECT_GIVE_UP = 3600
+# Without buffer feedback nobody knows how much the plotter still had to draw when the connection
+# dropped, so a plot carries on from this many bytes earlier (drawing a little twice, not leaving a gap)
+REWIND_NO_FEEDBACK = 1024
+REWIND_HPIB = 64
+
+
+class _Quiet:
+    """Stands in for socketio when a failure is expected and should not be reported."""
+
+    def emit(self, *args, **kwargs):
+        pass
+
+
+def sleep_while_printing(seconds):
+    end = time.time() + seconds
+    while time.time() < end and globals.printing:
+        time.sleep(min(0.05, max(end - time.time(), 0)))
+
+
+def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_buffer, hpglfile, target):
+    """The serial connection dropped in the middle of a plot (the adapter was unplugged, the cable
+    came loose). Hold the plot, open the port again with growing pauses, then wait until the user
+    has checked the plotter and pressed Resume.
+
+    `target` is the byte of the file to carry on from. Returns (tty, buffer size, offset, preamble):
+    the new port, and what to send first (see hpgl_analysis.resume_preamble) before reading the file
+    from `offset` (the start of the command at `target`). Returns 'stopped' when Stop was pressed
+    and 'failed' when the plotter could not be reached again."""
+    socketio.emit('error', {'data': 'Lost the connection to the plotter: ' + str(reason)})
+    notification.telegram_sendNotification('{}: {}: Connection lost'.format(notify_name, globals.current_file))
+    try:
+        tty.close()
+    except PORT_ERRORS:
+        pass
+    globals.wait_reason = 'disconnected'
+    globals.paused = True
+    socketio.emit('status_log', {'data': 'Plot held. Trying to connect to the plotter again...'})
+    socketio.emit('wait_change', {'data': {'reason': 'disconnected'}})
+
+    started = time.time()
+    attempt = 0
+    new_tty = None
+    while globals.printing and new_tty is None:
+        sleep_while_printing(RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)])
+        attempt += 1
+        if not globals.printing:
+            break
+        new_tty = open_port(_Quiet(), port, baud, flowControl)
+        if new_tty is None and time.time() - started > RECONNECT_GIVE_UP:
+            socketio.emit('error', {'data': 'Could not connect to the plotter again: the plot is given up.'})
+            globals.clear_wait()
+            return 'failed'
+    if new_tty is None:
+        globals.clear_wait()
+        return 'stopped'
+
+    # The port is back. The plotter may have lost its place or its power, so the user confirms
+    globals.wait_reason = 'reconnect'
+    globals.paused = True
+    socketio.emit('status_log', {'data': 'The plotter is connected again. Check that the paper and the pen '
+                                         'carriage have not moved, then press Resume to carry on.'})
+    socketio.emit('wait_change', {'data': {'reason': 'reconnect'}})
+    notification.telegram_sendNotification('{}: {}: Connected again, press Resume'.format(
+        notify_name, globals.current_file))
+    while globals.printing and globals.paused:
+        time.sleep(0.1)
+    if not globals.printing:
+        new_tty.close()
+        globals.clear_wait()
+        return 'stopped'
+
+    bufsz = 1024
+    if use_buffer:
+        try:
+            bufsz = plotter_cmd(new_tty, b'\033.L', True)
+        except HPGLError as e:
+            socketio.emit('error', {'data': 'The plotter does not answer: ' + str(e)})
+            new_tty.close()
+            return 'failed'
+        socketio.emit('buffer_size', {'data': str(bufsz)})
+    try:
+        preamble, offset = hpgl_analysis.resume_preamble(hpglfile, target)
+    except ValueError:
+        preamble, offset = b'', target      # everything had been sent: only the end of the file is left
+    socketio.emit('status_log', {'data': 'Carrying on from byte {} of the file.'.format(offset)})
+    return new_tty, bufsz, offset, preamble
+
 
 def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0):
     """Stream an HPGL file to the plotter. Returns True if the plot finished or was stopped.
@@ -278,6 +369,9 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         last_eta = 0
         paused_since = None
         paused_time = 0.0
+        pending = b''           # set-up commands to send before the file carries on (after a reconnect)
+        last_len = 0            # size of the chunk written last
+        last_stop = 0           # offset of the last pen change that was passed
 
         def send_eta(offset):
             nonlocal last_eta
@@ -315,123 +409,154 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         send_eta(0)
 
         while globals.printing == True:
+            try:
 
-            if globals.paused:
-                # Hold back the data (the plotter finishes what is in its buffer), but stay
-                # responsive to the stop button
-                if paused_since is None:
-                    paused_since = time.time()
-                time.sleep(0.1)
-                continue
-            if paused_since is not None:
-                paused_time += time.time() - paused_since
-                paused_since = None
-
-            if pen_stops and total_bytes_written >= pen_stops[0][0]:
-                _, pen = pen_stops.popleft()
-                if use_buffer:
-                    # Let the plotter draw what is in its buffer before asking for the pen change
-                    while globals.printing:
-                        bufsp = plotter_cmd(tty, b'.B', True)
-                        if bufsp == bufsz:
-                            break
-                        time.sleep(0.5)
-                        socketio.emit('buffer_space', {'data': str(bufsp)})
-                    if not globals.printing:
-                        break
-                tty.write(b'PU;')
-                globals.wait_reason = 'pen_change'
-                globals.wait_pen = pen
-                globals.paused = True
-                socketio.emit('status_log', {'data': 'Pen change: wait for the plotter to stop, load pen {}, '
-                                                     'then press Resume.'.format(pen)})
-                socketio.emit('pen_change', {'data': {'pen': pen}})
-                notification.telegram_sendNotification('{}: {}: Load pen {}'.format(
-                    notify_name, globals.current_file, pen))
-                continue
-
-            if flowControl == 'HP-IB':
-                size = 1
-            elif bufsz < 80:
-                size = 10
-            else:
-                size = 30
-            if pen_stops:
-                size = min(size, pen_stops[0][0] - total_bytes_written)    # stop exactly at the pen change
-            data = hpgl.read(size)
-            bufsz_read = len(data)
-
-            if flowControl in ('CTS/RTS', 'HP-IB'):
-                if not tty.getCTS():
-                    time.sleep(0.05)
-                    # Wait for the plotter, but stay responsive to the stop button
-                    while not tty.getCTS() and globals.printing:
-                        time.sleep(0.0005)
-                    if not globals.printing:
-                        break
-
-            if use_buffer:
-                try:
-                    bufsp = plotter_cmd(tty, b'\033.B', True)
-                except HPGLError as e:
-                    print('*** Error initializing the plotter!')
-                    print(e)
-
-                    socketio.emit('error', {'data': '*** Error on buffer space query!'})
-                    socketio.emit('error', {'data': str(e)})
-                    return False
-
-                print('### BUFFER SPACE : ' + str(bufsp))
-                socketio.emit('buffer_space', {'data': str(bufsp)})
-
-            if flowControl == 'Software':
-                if bufsp < bufsz / 2:
+                if globals.paused:
+                    # Hold back the data (the plotter finishes what is in its buffer), but stay
+                    # responsive to the stop button
+                    if paused_since is None:
+                        paused_since = time.time()
                     time.sleep(0.1)
+                    continue
+                if paused_since is not None:
+                    paused_time += time.time() - paused_since
+                    paused_since = None
 
-            tty.write(data)
-            total_bytes_written += bufsz_read
-            # Where a stopped or failed plot can carry on: what the plotter has not drawn yet is
-            # in its buffer (known with buffer flow control) or was in this last chunk
-            globals.sent_offset = total_bytes_written
-            globals.buffer_used = (bufsz - bufsp) + bufsz_read if use_buffer else 0
+                if pen_stops and total_bytes_written >= pen_stops[0][0]:
+                    last_stop, pen = pen_stops.popleft()
+                    if use_buffer:
+                        # Let the plotter draw what is in its buffer before asking for the pen change
+                        while globals.printing:
+                            bufsp = plotter_cmd(tty, b'.B', True)
+                            if bufsp == bufsz:
+                                break
+                            time.sleep(0.5)
+                            socketio.emit('buffer_space', {'data': str(bufsp)})
+                        if not globals.printing:
+                            break
+                    tty.write(b'PU;')
+                    globals.wait_reason = 'pen_change'
+                    globals.wait_pen = pen
+                    globals.paused = True
+                    socketio.emit('status_log', {'data': 'Pen change: wait for the plotter to stop, load pen {}, '
+                                                         'then press Resume.'.format(pen)})
+                    socketio.emit('pen_change', {'data': {'pen': pen}})
+                    notification.telegram_sendNotification('{}: {}: Load pen {}'.format(
+                        notify_name, globals.current_file, pen))
+                    continue
 
-            if bufsz_read == 0:
-                # Wait for the plotter to work through its buffer
+                if flowControl == 'HP-IB':
+                    size = 1
+                elif bufsz < 80:
+                    size = 10
+                else:
+                    size = 30
+                if pen_stops:
+                    size = min(size, pen_stops[0][0] - total_bytes_written)    # stop exactly at the pen change
+                if pending:
+                    data, pending = pending[:size], pending[size:]
+                    from_file = False
+                else:
+                    data = hpgl.read(size)
+                    from_file = True
+                bufsz_read = len(data)
+
+                if flowControl in ('CTS/RTS', 'HP-IB'):
+                    if not tty.getCTS():
+                        time.sleep(0.05)
+                        # Wait for the plotter, but stay responsive to the stop button
+                        while not tty.getCTS() and globals.printing:
+                            time.sleep(0.0005)
+                        if not globals.printing:
+                            break
+
                 if use_buffer:
-                    while bufsp != bufsz and globals.printing:
+                    try:
                         bufsp = plotter_cmd(tty, b'\033.B', True)
-                        time.sleep(0.5)
-                        socketio.emit('buffer_space', {'data': str(bufsp)})
-                        print('### BUFFER SPACE : ' + str(bufsp))
+                    except HPGLError as e:
+                        print('*** Error initializing the plotter!')
+                        print(e)
 
-                if not globals.printing:
+                        socketio.emit('error', {'data': '*** Error on buffer space query!'})
+                        socketio.emit('error', {'data': str(e)})
+                        return False
+
+                    print('### BUFFER SPACE : ' + str(bufsp))
+                    socketio.emit('buffer_space', {'data': str(bufsp)})
+
+                if flowControl == 'Software':
+                    if bufsp < bufsz / 2:
+                        time.sleep(0.1)
+
+                tty.write(data)
+                if from_file:
+                    total_bytes_written += bufsz_read
+                last_len = bufsz_read
+                # Where a stopped or failed plot can carry on: what the plotter has not drawn yet is
+                # in its buffer (known with buffer flow control) or was in this last chunk
+                globals.sent_offset = total_bytes_written
+                globals.buffer_used = (bufsz - bufsp) + bufsz_read if use_buffer else 0
+
+                if bufsz_read == 0:
+                    # Wait for the plotter to work through its buffer
+                    if use_buffer:
+                        while bufsp != bufsz and globals.printing:
+                            bufsp = plotter_cmd(tty, b'\033.B', True)
+                            time.sleep(0.5)
+                            socketio.emit('buffer_space', {'data': str(bufsp)})
+                            print('### BUFFER SPACE : ' + str(bufsp))
+
+                    if not globals.printing:
+                        break
+
+                    print('*** End of Print, exiting.')
+                    minutes = math.ceil((time.time() - globals.start_stamp) / 60)
+                    notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Finished' + ': ' + str(minutes) + ' Minutes Total')
+                    globals.drawn_seconds = time.time() - globals.start_stamp - paused_time
+                    globals.current_file = 'None'
+                    globals.start_stamp = 0
+                    send_eta(input_bytes)
+                    socketio.emit('bytes_written', {'data': f'**EOP** - {total_bytes_written} bytes sent. Exiting.'})
+                    socketio.emit('print_progress', {'data': 100})
+                    socketio.emit('end_of_print', {'data': 'True'})
+                    finished = True
                     break
 
-                print('*** End of Print, exiting.')
-                minutes = math.ceil((time.time() - globals.start_stamp) / 60)
-                notification.telegram_sendNotification(notify_name + ': ' + globals.current_file + ': Finished' + ': ' + str(minutes) + ' Minutes Total')
-                globals.drawn_seconds = time.time() - globals.start_stamp - paused_time
-                globals.current_file = 'None'
-                globals.start_stamp = 0
-                send_eta(input_bytes)
-                socketio.emit('bytes_written', {'data': f'**EOP** - {total_bytes_written} bytes sent. Exiting.'})
-                socketio.emit('print_progress', {'data': 100})
-                socketio.emit('end_of_print', {'data': 'True'})
-                finished = True
-                break
+                percent = int(100.0 * total_bytes_written / input_bytes)
+                if percent != prev_percent:
+                    socketio.emit('bytes_written', {'data': f'{percent:.0f}%, {total_bytes_written} bytes written.'})
+                    socketio.emit('print_progress', {'data': percent})
+                    prev_percent = percent
+                    send_eta(total_bytes_written)
+                elif time.time() - last_eta >= ETA_EVERY:
+                    send_eta(total_bytes_written)
 
-            percent = int(100.0 * total_bytes_written / input_bytes)
-            if percent != prev_percent:
-                socketio.emit('bytes_written', {'data': f'{percent:.0f}%, {total_bytes_written} bytes written.'})
-                socketio.emit('print_progress', {'data': percent})
-                prev_percent = percent
-                send_eta(total_bytes_written)
-            elif time.time() - last_eta >= ETA_EVERY:
-                send_eta(total_bytes_written)
-
+            except PORT_ERRORS as e:
+                if not globals.printing:
+                    break
+                lost_at = time.time()
+                if use_buffer:
+                    unprocessed = (bufsz - bufsp) + last_len
+                else:
+                    unprocessed = REWIND_HPIB if flowControl == 'HP-IB' else REWIND_NO_FEEDBACK
+                result = reconnect(socketio, notify_name, e, tty, port, baud, flowControl, use_buffer, hpglfile,
+                                   max(total_bytes_written - unprocessed, last_stop, 0))
+                if result == 'failed':
+                    return False
+                if result == 'stopped':
+                    tty = None
+                    break
+                tty, bufsz, total_bytes_written, pending = result
+                bufsp = bufsz
+                hpgl.seek(total_bytes_written)
+                globals.sent_offset = total_bytes_written
+                globals.buffer_used = 0
+                last_len = 0
+                paused_time += time.time() - lost_at
+                socketio.emit('status_log', {'data': 'Plot carrying on.'})
         if not finished:
             # The plot was stopped from the UI
-            if use_buffer:
+            if use_buffer and tty is not None:
                 abort_plot(tty)
             globals.current_file = 'None'
             globals.start_stamp = 0
