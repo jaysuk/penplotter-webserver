@@ -52,9 +52,12 @@ jobs:
             export WEBPLOTTER_BRANCH="${{ github.ref_name }}"
             export WEBPLOTTER_NO_REBOOT=1
 
-            # This runs through "sudo -E chroot", which leaves SUDO_USER set. install.sh refuses to run
-            # as "sudo bash install.sh", which is what that variable looks like, so clear it here
+            # This runs as root in a chroot through "sudo -E", which leaks two things from the runner:
+            # SUDO_USER (install.sh refuses to run as "sudo bash install.sh", which is what it looks like)
+            # and HOME=/home/runner (a folder that does not exist here and is not root's, which install.sh
+            # also refuses). Put both back to what root really has.
             unset SUDO_USER SUDO_UID SUDO_GID SUDO_COMMAND
+            export HOME=/root
             chmod +x install.sh
             installer="$PWD/install.sh"
 
