@@ -272,6 +272,31 @@ body {
 .mac-card .uk-form-label {
   color: #FFF;
 }
+.mac-card .uk-button-default {
+  color: #dadada;
+  border-color: #928f8f;
+}
+.mac-card .uk-button-default:hover, .mac-card .uk-button-default:focus {
+  color: #fff;
+  border-color: #fff;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.mac-card .uk-button-default:disabled {
+  color: #777;
+  border-color: #555;
+}
+
+/* Plotter control: the jog arrows keep a fixed size so the buttons beside them have room */
+.jog-pad {
+  width: 180px;
+}
+.jog-pad .uk-button {
+  padding: 0;
+}
+.mac-card .uk-button-group .uk-button {
+  padding: 0 10px;
+  white-space: nowrap;
+}
 
 .mac-browser-bar {
   background: #f9f9f3;
