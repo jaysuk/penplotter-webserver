@@ -15,8 +15,8 @@ import pytest
 import fake_serial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'backup.py', 'plot_queue.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py', 'text_drawing.py', 'vpype_plugins.py', 'plotters.py', 'vpype_devices.py', 'timelapse.py', 'buttons.py']
-APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'backup', 'plot_queue', 'hpgl_analysis', 'plotter_control', 'presets', 'text_drawing', 'vpype_plugins', 'plotters', 'vpype_devices', 'timelapse', 'buttons', 'convert_vpype']
+SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'backup.py', 'plot_queue.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py', 'text_drawing.py', 'vpype_plugins.py', 'plotters.py', 'vpype_devices.py', 'timelapse.py', 'buttons.py', 'ui_state.py']
+APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'backup', 'plot_queue', 'hpgl_analysis', 'plotter_control', 'presets', 'text_drawing', 'vpype_plugins', 'plotters', 'vpype_devices', 'timelapse', 'buttons', 'ui_state', 'convert_vpype']
 
 
 @pytest.fixture(scope='session')

@@ -36,6 +36,7 @@ import send2serial
 import tasmota
 import timelapse as lapse
 import text_drawing
+import ui_state
 import vpype_devices
 import vpype_plugins
 from convert_vpype import convert_file, output_name, create_text as make_text_svg
@@ -1485,6 +1486,20 @@ def import_plotters():
     if error:
         return error, 400
     return jsonify({'imported': count, 'names': [profile['name'] for profile in profiles]})
+
+
+# What the page's forms were set to, so a reload or another device shows the same values
+@app.route('/ui_state', methods=['GET'])
+def get_ui_state():
+    return jsonify(ui_state.load())
+
+
+@app.route('/ui_state', methods=['POST'])
+def save_ui_state():
+    error = ui_state.save(request.get_json(silent=True))
+    if error:
+        return error, 400
+    return 'Saved'
 
 
 # vpype devices of the user: plotters vpype does not know. The text is vpype's own device format (TOML).

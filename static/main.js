@@ -50,6 +50,7 @@ function updateBaud() {
         if (response != "None") {
           // change to new baudrate value
           $(".baudRate").val(response);
+          scheduleUiSave();
         } else {
           notify("Plotter not detected", "warning");
         }
@@ -698,6 +699,7 @@ function applyPlotterProfile(id) {
   }
   // Show the serial line when the plotter does something unusual with it
   if (changed) jQuery("#serialLine").prop("open", true);
+  scheduleUiSave();
 }
 
 function savePlotter() {
@@ -972,6 +974,7 @@ function applyPreset(name) {
     custom.prop("checked", true).trigger("change");
     jQuery("#command_input").val(options.command_input);
   }
+  scheduleUiSave();
 }
 
 function savePreset() {
@@ -1782,6 +1785,116 @@ function actionTasmota() {
     });
 }
 
+// What the forms were set to is kept on the server (userdata/ui_state.json), so a reload or another device shows the
+// same values. The file, the chosen pens and the typed text are not part of it.
+const UI_STATE_FORMS = { plotter: "#plotterData", convert: "#convertData", text: "#textData" };
+const UI_STATE_SKIP = { plotter: ["file", "pens"], convert: ["file"], text: ["text"] };
+var uiStateReady = false; // nothing is saved before the saved values have been put back
+var uiStateRestoring = false;
+var uiStateTimer = null;
+
+function uiStateFields(group) {
+  const form = jQuery(UI_STATE_FORMS[group])[0];
+  if (!form) return [];
+  return Array.from(form.elements).filter(function (el) {
+    return el.name && UI_STATE_SKIP[group].indexOf(el.name) < 0 && ["hidden", "button", "submit", "file", "password"].indexOf(el.type) < 0;
+  });
+}
+
+function collectUiState() {
+  const state = {};
+  for (const group in UI_STATE_FORMS) {
+    const values = {};
+    for (const el of uiStateFields(group)) {
+      if (el.type === "checkbox") {
+        // The optimisation boxes are cleared and disabled by a custom command: what they were is kept aside
+        const original = el.getAttribute("data-original");
+        values[el.name] = el.disabled && original !== null ? original === "true" : el.checked;
+      } else {
+        values[el.name] = el.value;
+      }
+    }
+    state[group] = values;
+  }
+  state.plotter._profile = jQuery("#plotterProfile").val() || "";
+  state.plotter._queuePause = jQuery("#queuePause").is(":checked");
+  return state;
+}
+
+function scheduleUiSave() {
+  if (!uiStateReady || uiStateRestoring) return;
+  clearTimeout(uiStateTimer);
+  uiStateTimer = setTimeout(function () {
+    axios.post("/ui_state", collectUiState()).catch(function (error) {
+      console.error(error);
+    });
+  }, 400);
+}
+
+// Put the saved values back into the forms, on top of the defaults from the settings
+function applyUiState(state) {
+  uiStateRestoring = true;
+  try {
+    const plotter = state.plotter || {};
+    const convert = state.convert || {};
+    const put = function (group, values) {
+      // The device first: it decides which paper sizes there are
+      const names = Object.keys(values).sort(function (a, b) { return (b === "device") - (a === "device"); });
+      for (const name of names) {
+        const field = jQuery(UI_STATE_FORMS[group]).find("[name='" + name + "']");
+        if (!field.length) continue;
+        if (field.is(":checkbox")) {
+          field.prop("checked", !!values[name]);
+        } else if (field.is("select")) {
+          // A baud rate may not be in the list; anything else must be (a port that is gone stays as it was)
+          if (name === "baudrate") setSelect(field, values[name]);
+          else if (field.find("option").filter(function () { return this.value === values[name]; }).length) field.val(values[name]);
+        } else {
+          field.val(values[name]);
+        }
+        if (name === "device" || name === "flowControl") field.trigger("change");
+      }
+    };
+    put("plotter", plotter);
+    jQuery("[form='plotterData'][name='timelapse'], [form='plotterData'][name='tasmota']").each(function () {
+      if (this.name in plotter) this.checked = !!plotter[this.name];
+    });
+    // The chosen plotter is shown, but not applied again: the values above are what the form was set to
+    if (plotterProfiles[plotter._profile]) {
+      jQuery("#plotterProfile").val(plotter._profile);
+      showPlotterNotes(plotter._profile);
+    }
+    if ("_queuePause" in plotter) jQuery("#queuePause").prop("checked", !!plotter._queuePause);
+    if (plotter.timeout || LINE_FIELDS.some(function (key) { return key in plotter && plotter[key] !== LINE_DEFAULTS[key]; })) {
+      jQuery("#serialLine").prop("open", true);
+    }
+
+    // The optimisation boxes first, then the custom command (which clears and locks them)
+    const custom = jQuery("#use_custom_command");
+    if (custom.prop("checked")) custom.prop("checked", false).trigger("change");
+    put("convert", convert);
+    if (custom.prop("checked")) custom.trigger("change");
+    updatePageSize();
+    put("text", state.text || {});
+  } finally {
+    uiStateRestoring = false;
+  }
+}
+
+function loadUiState() {
+  return axios
+    .get("/ui_state")
+    .then(function (response) {
+      applyUiState(response.data || {});
+    })
+    .catch(function (error) {
+      console.error(error);
+    })
+    .then(function () {
+      uiStateReady = true;
+    });
+}
+
 // Fetch config.ini data and update UI
 function updateConfiguration() {
   return updateVpypeDevices()
@@ -1821,7 +1934,8 @@ function updateConfiguration() {
     .catch(function (error) {
       notify(errorMessage(error), "danger");
       console.error(error);
-    });
+    })
+    .then(scheduleUiSave); // the form now shows the defaults again
 }
 
 // The notification settings that are plain fields in the config modal

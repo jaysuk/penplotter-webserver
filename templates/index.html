@@ -1606,7 +1606,10 @@
       updateFiles();
 
       // Fetch configuration data once the port list is loaded so the default port can be selected
-      updatePorts().then(updateConfiguration);
+      // then put back what the forms were set to (kept on the server, so any device shows the same)
+      updatePorts().then(updateConfiguration).then(loadUiState);
+
+      jQuery(document).on('change input', '#plotterData, #convertData, #textData, #queuePause, #plotterProfile, [form="plotterData"]', scheduleUiSave);
 
       // Create uploader
       const uploadFiles = new Dropzone("#uploadFiles", { acceptedFiles: '.svg,.hpgl,.cal{% if pdf_import %},.pdf{% endif %}', maxFilesize: 200 });
