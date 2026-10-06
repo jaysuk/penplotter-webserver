@@ -4,6 +4,7 @@ import vpype as vp
 from vpype_cli import execute
 
 import text_drawing
+import vpype_devices
 
 # Scale and crop the svg to the selected paper size
 LANDSCAPE_LAYOUT = ' eval w,h=gprop.vp_page_size crop 0 0 %w% %h% rect -l1000 0 0 %w% %h% '
@@ -106,6 +107,7 @@ def convert_file(file, outputsize = 'a4', pageorientation = 'landscape', device 
     outputFile = output or output_name(file, outputsize, pageorientation, device, custom_comand, linemerge,
                                        linesort, linesimplify, reloop, margin, rotate, mirror_x, mirror_y)
 
+    vpype_devices.register()        # the user's own devices, for `write --device`
     args += ' write --device ' + str(device)
 
     args += ' --page-size ' + str(outputsize)

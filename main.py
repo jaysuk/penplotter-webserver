@@ -23,20 +23,23 @@ from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 
 import backup
+import buttons
 import globals
 import history
 import hpgl_analysis
 import notification
 import plot_queue
 import plotter_control
+import plotters
 import presets
 import send2serial
 import tasmota
+import timelapse as lapse
 import text_drawing
+import vpype_devices
 import vpype_plugins
 from convert_vpype import convert_file, output_name, create_text as make_text_svg
 from config import config
-# import RPi.GPIO as GPIO
 
 globals.initialize()
 history.init()
@@ -54,15 +57,8 @@ DEBUG = os.environ.get('WEBPLOTTER_DEBUG') == '1'
 
 socketio = SocketIO(app)
 
-# Buttons setup
-
-# GPIO.setmode(GPIO.BCM)
-# GPIO.setup(27, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-# GPIO.setup(22, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-DEVICES = {'hp7475a', 'hp7440a', 'hp7550', 'dxy', 'sketchmate', 'dmp_161',
-           'designmate', 'artisan', 'mp4200'}
-FLOW_CONTROLS = {'CTS/RTS', 'HP-IB', 'XON/XOFF', 'Software', 'None'}
+DEVICES = plotters.DEVICES
+FLOW_CONTROLS = plotters.FLOW_CONTROLS      # includes send2serial.CAL_POLL (a test checks)
 OUTPUT_SIZES = {'a0', 'a1', 'a2', 'a3', 'a4'}
 ORIENTATIONS = {'portrait', 'landscape'}
 ROTATIONS = {'0', '90', '180', '270'}
@@ -71,7 +67,7 @@ MAX_MARGIN_MM = 50
 TEXT_SIZE_RE = re.compile(r'[0-9]{1,3}(\.[0-9])?')
 TEXT_SIZE_MM = (3, 200)
 PENS_RE = re.compile(r'[0-9]{1,2}(,[0-9]{1,2}){0,15}')
-PEN_CHANGES = {'pause', 'auto'}
+PEN_CHANGES = plotters.PEN_CHANGES
 PORT_RE = re.compile(r'^(/dev/[\w./-]+|COM\d+)$')
 SPEED_RE = re.compile(r'^(\d+(\.\d+)?)?$')
 HOST_RE = re.compile(r'^([A-Za-z0-9.-]+(:\d{1,5})?)?$')
@@ -106,7 +102,7 @@ PLOT_EXTENSIONS = ('.hpgl', '.cal')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
-for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications'):
+for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications', 'buttons'):
     if not config.has_section(_section):
         config.add_section(_section)
 
@@ -194,8 +190,12 @@ def upload_file_path(name):
     return app.config['UPLOAD_PATH'] + '/' + os.path.relpath(full, root).replace(os.sep, '/')
 
 
-def valid_baudrate(value):
-    return isinstance(value, str) and re.fullmatch(r'[0-9]+', value) is not None and 300 <= int(value) <= 921600
+valid_baudrate = plotters.valid_baudrate
+
+
+def valid_device(device):
+    """A vpype device the page can convert for: one that comes with vpype, or one the user added."""
+    return device in DEVICES or device in vpype_devices.ids()
 
 
 def check_vpype_command(command):
@@ -230,8 +230,12 @@ def conversion_options(form):
         return None, 'Invalid output size'
     if pageorientation not in ORIENTATIONS:
         return None, 'Invalid page orientation'
-    if device not in DEVICES:
+    if not valid_device(device):
         return None, 'Invalid plotter device'
+    sizes = vpype_devices.papers(device)
+    if sizes is not None and outputsize not in sizes:
+        return None, 'The device {} has no {} paper size (it has {}). Add one to the device.'.format(
+            device, outputsize.upper(), ', '.join(sorted(sizes)))
     if not SPEED_RE.fullmatch(speed):
         return None, 'Invalid plot speed'
     if not MARGIN_RE.fullmatch(margin) or float(margin) > MAX_MARGIN_MM:
@@ -357,6 +361,39 @@ def resume_point(outcome, resume_start=0, resume_skip=0):
     return sent or None
 
 
+def start_timelapse(events, file):
+    """Start taking pictures for this plot. Returns the recorder, or None (the reason is in the log)."""
+    def on_frame(count):
+        if lapse.preview():
+            socketio.emit('timelapse_frame', {'data': {'id': recorder.id, 'n': count}})
+
+    recorder = lapse.Recorder(file, emit=events.emit, paused=lambda: globals.paused, on_frame=on_frame)
+    reason = recorder.start()
+    if reason:
+        events.emit('status_log', {'data': 'Timelapse not recorded: ' + reason})
+        return None
+    globals.timelapse_id = recorder.id
+    broadcast_plot_state()
+    return recorder
+
+
+def finish_timelapse(events, recorder):
+    """Take the last picture and make the video in the background. Always returns None."""
+    frames = recorder.stop()
+    globals.timelapse_id = None
+    if frames == 0:
+        lapse.delete(recorder.id)
+        events.emit('status_log', {'data': 'Timelapse: no pictures were taken.'})
+    elif frames == 1:
+        events.emit('status_log', {'data': 'Timelapse: only one picture was taken, so there is no video.'})
+    else:
+        events.emit('status_log', {'data': 'Timelapse: {} pictures taken.'.format(frames)})
+        socketio.start_background_task(lapse.render, recorder.id, socketio.emit)
+    socketio.emit('timelapse_changed', {'data': recorder.id})
+    broadcast_plot_state()
+    return None
+
+
 def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None,
          options=None, power_on=True, keep_power=None, paper_change=False, resume_from=None, resume_job=None):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock.
@@ -380,6 +417,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     job = history.start(os.path.basename(file), port, baudrate, flowControl, options, file_size)
     outcome, error = None, None
     temporary = None
+    recorder = None
     resume_start, resume_skip = 0, 0
     try:
         # Lock editing while printing
@@ -431,9 +469,12 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             events.emit('status_log', {'data': '*** Plot stopped.'})
             outcome = 'stopped'
         else:
+            if timelapse == 'on' and lapse.enabled():
+                recorder = start_timelapse(events, file)
             result = send2serial.sendToPlotter(events, str(send_path), str(port), int(baudrate), str(flowControl),
                                                analysis=analysis, pen_pause=(pen_change == 'pause'),
-                                               correction=history.correction())
+                                               correction=history.correction(),
+                                               line=plotters.line_options(options))
             if result is False:
                 outcome, error = 'failed', last_error()
             else:
@@ -442,6 +483,8 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
 
         # In a queue: the next plot follows, so the plotter stays on and the paper may be changed
         another_follows = outcome == 'completed' and keep_power is not None and keep_power()
+        if another_follows and recorder is not None:
+            recorder = finish_timelapse(events, recorder)       # nothing to see while the paper is changed
         if another_follows and paper_change:
             wait_for_paper_change(events)
 
@@ -460,12 +503,21 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
                              '(Stop skips the wait)'.format(tasmota.off_delay()), stoppable=True)
             print("Sending power off command to Tasmota")
             tasmota.tasmota_setStatus(events, 'off')
+        elif recorder is not None and outcome == 'completed':
+            # Nothing waits for the plotter to finish drawing: go on recording for a while
+            wait_seconds(events, lapse.tail(), 'Recording the timelapse for {} more seconds'.format(lapse.tail()),
+                         stoppable=True)
     except Exception as e:
         traceback.print_exc()
         events.emit('error', {'data': 'Plot failed: ' + repr(e)})
         if outcome is None:
             outcome, error = 'failed', repr(e)
     finally:
+        if recorder is not None:
+            try:
+                finish_timelapse(events, recorder)
+            except Exception:
+                traceback.print_exc()       # a timelapse must never stop a plot
         history.finish(job, outcome or 'failed', globals.plot_progress, error,
                        drawn_s=globals.drawn_seconds if outcome == 'completed' else None,
                        resume_offset=None if cal else resume_point(outcome, resume_start, resume_skip))
@@ -492,15 +544,48 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
 
 
 # ////////////////////////////////////////////////////////////////////////////
-# Buttons :TODO - something useful with buttons
-def start_button(channel):
-    socketio.emit('status_log', {'data': 'Button 2 was pushed!'})
+# The buttons of the Pi Plot shield (buttons.py): each does what is set in the settings, with the same
+# checks as the page's buttons, and says what happened in the log of every open page.
 
-def stop_button(channel):
-    socketio.emit('status_log', {'data': 'Button 1 was pushed!'})
+def _message(result):
+    return result[0] if isinstance(result, tuple) else result
 
-# GPIO.add_event_detect(27,GPIO.RISING,callback=start_button)
-# GPIO.add_event_detect(22,GPIO.RISING,callback=stop_button)
+
+def button_start():
+    """Resume a held plot (also after a pen or paper change), else start the queue."""
+    if plot_lock.locked():
+        if globals.paused:
+            return _message(set_paused(False))
+        return 'a plot is already running'
+    return _message(queue_start())
+
+
+def button_stop():
+    return _message(stop_plot())
+
+
+def button_pause():
+    if not plot_lock.locked():
+        return 'no plot is running'
+    return _message(set_paused(not globals.paused))
+
+
+BUTTON_HANDLERS = {'start': button_start, 'stop': button_stop, 'pause': button_pause}
+button_problem = None
+
+
+def setup_buttons():
+    """(Re)claim the shield's buttons to match the settings. Never raises."""
+    global button_problem
+    try:
+        button_problem = buttons.apply(BUTTON_HANDLERS, lambda text: socketio.emit('status_log', {'data': text}))
+    except Exception as e:
+        button_problem = 'Could not set the buttons up ({})'.format(type(e).__name__)
+    if button_problem:
+        print(button_problem)
+        socketio.emit('error', {'data': button_problem})
+    return button_problem
+
 
 @app.errorhandler(413)
 def too_large(e):
@@ -584,9 +669,114 @@ def import_pdf(uploaded_file, base):
 def upload(filename):
     return send_from_directory(app.config['UPLOAD_PATH'], filename)
 
-@app.route('/timelapse/<filename>')
-def timelapse(filename):
-    return send_from_directory(os.path.join(BASE_DIR, 'timelapse'), filename)
+# ////////////////////////////////////////////////////////////////////////////
+# Timelapse
+
+@app.route('/timelapses', methods=['GET'])
+def timelapse_list():
+    return jsonify({'items': lapse.list_all(), 'enabled': lapse.enabled(), 'problem': lapse.problem(),
+                    'ffmpeg': lapse.video_tool() is not None, 'preview': lapse.preview(),
+                    'auto_start': lapse.auto_start(), 'recording': globals.timelapse_id, 'usage': lapse.usage()})
+
+
+@app.route('/timelapse/<ident>/<name>', methods=['GET'])
+def timelapse_file(ident, name):
+    path = lapse.file_path(ident, name)
+    if path is None:
+        return 'There is no such file', 404
+    if name == 'frames.zip':
+        return stream_zip(lapse.make_zip, ident, '{}-pictures.zip'.format(ident))
+    download = name == 'timelapse.mp4' and request.args.get('download') == '1'
+    response = send_from_directory(os.path.join(BASE_DIR, os.path.dirname(path)), os.path.basename(path),
+                                   as_attachment=download, download_name=ident + '.mp4' if download else None,
+                                   conditional=True)
+    if name == 'latest.jpg':
+        response.headers['Cache-Control'] = 'no-store'      # the picture of a plot that is still running changes
+    return response
+
+
+def stream_zip(make, ident, download_name):
+    """Send a zip that `make(ident, path)` writes, removing the temporary file once it is sent."""
+    handle, path = tempfile.mkstemp(suffix='.zip')
+    os.close(handle)
+    try:
+        make(ident, path)
+        size = os.path.getsize(path)
+    except Exception:
+        os.remove(path)
+        raise
+
+    def stream():
+        try:
+            with open(path, 'rb') as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    return Response(stream(), mimetype='application/zip', headers={
+        'Content-Length': str(size), 'Content-Disposition': 'attachment; filename="{}"'.format(download_name)})
+
+
+@app.route('/timelapse/delete', methods=['POST'])
+def timelapse_delete():
+    ident = request.form.get('id', '')
+    if lapse.folder(ident) is None:
+        return 'Invalid timelapse', 400
+    error = lapse.delete(ident)
+    if error:
+        return error, 409 if lapse.busy(ident) else 404
+    return 'Timelapse deleted'
+
+
+# Make the video again (for example once ffmpeg is installed, or with another speed)
+@app.route('/timelapse/render', methods=['POST'])
+def timelapse_render():
+    ident = request.form.get('id', '')
+    path = lapse.folder(ident)
+    if path is None or not os.path.isdir(path):
+        return 'There is no such timelapse', 404
+    rate = request.form.get('fps', '')
+    if rate and (not re.fullmatch(r'[0-9]{1,2}', rate) or not 1 <= int(rate) <= 60):
+        return 'The speed is 1 to 60 pictures per second', 400
+    if lapse.video_tool() is None:
+        return 'ffmpeg is not installed (sudo apt install ffmpeg)', 409
+    if len(lapse.frame_numbers(path)) < 2:
+        return 'There are no pictures to make a video from (they are deleted once the video is made, unless kept)', 409
+    if lapse.busy(ident):
+        return 'That timelapse is busy', 409
+    socketio.start_background_task(lapse.render, ident, socketio.emit, int(rate) if rate else None, True)
+    return 'Making the video'
+
+
+# Take one picture, to check the camera points at the plotter
+@app.route('/timelapse/test', methods=['POST'])
+def timelapse_test():
+    if globals.timelapse_id:
+        return 'A timelapse is being recorded', 409
+    reason = lapse.problem()
+    if reason:
+        return reason, 400
+    handle, path = tempfile.mkstemp(suffix='.jpg')
+    os.close(handle)
+    try:
+        lapse.capture(path)
+        with open(path, 'rb') as f:
+            data = f.read()
+    except lapse.CaptureError as e:
+        return str(e), 502
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return Response(data, mimetype='image/jpeg', headers={'Cache-Control': 'no-store'})
 
 # Fetch Files
 @app.route('/update_files', methods=['GET'])
@@ -619,7 +809,7 @@ def storage():
     except OSError:
         history_bytes = 0
     return jsonify(dict(disk, uploads=folder_size(app.config['UPLOAD_PATH']), cache=folder_size('cache'),
-                        history=history_bytes))
+                        history=history_bytes, timelapse=lapse.usage()))
 
 
 # Delete the uploaded files that have not been touched for a number of days
@@ -746,6 +936,9 @@ def plotter_action(action):
     flowControl = request.form.get('flowControl')
     if flowControl not in FLOW_CONTROLS:
         return 'Invalid flow control', 400
+    line, error = plotters.clean_line(request.form)
+    if error:
+        return error, 400
     commands, query = plotter_commands(action, request.form)
     if commands is None:
         return query, 400
@@ -756,7 +949,8 @@ def plotter_action(action):
     try:
         collector = ErrorCollector()
         try:
-            reply = send2serial.run_commands(collector, port, int(baudrate), flowControl, commands, query)
+            reply = send2serial.run_commands(collector, port, int(baudrate), flowControl, commands, query,
+                                             line=plotters.line_options(line))
         except send2serial.HPGLError as e:
             return 'The plotter did not answer: ' + str(e), 504
     finally:
@@ -795,7 +989,10 @@ def update_baud():
         return 'Invalid port', 400
     if plot_lock.locked():
         return 'Cannot detect baudrate while plotting', 409
-    baudrate = send2serial.getBaudRate(port)
+    line, error = plotters.clean_line(request.form)
+    if error:
+        return error, 400
+    baudrate = send2serial.getBaudRate(port, plotters.line_options(line))
     return str(baudrate)
 
 # Delete uploaded filed
@@ -840,8 +1037,14 @@ def plot_request(values):
     flowControl = values.get('flowControl')
     if flowControl not in FLOW_CONTROLS:
         return None, ('Invalid flow control', 400)
-    if cal and flowControl.upper() not in send2serial.CAL_FLOW_CONTROLS:
-        return None, ('.cal files need XON/XOFF or no flow control', 400)
+    if cal and not send2serial.cal_flow_allowed(flowControl):
+        return None, ('.cal files need XON/XOFF, CalComp or no flow control', 400)
+    if flowControl == send2serial.CAL_POLL and not cal:
+        return None, ('CalComp flow control is for .cal files', 400)
+
+    line, error = plotters.clean_line(values)       # plots stored before these options existed use the defaults
+    if error:
+        return None, (error, 400)
 
     pen_change = values.get('pen_change') or config_value('plotter', 'pen_change') or 'auto'
     if pen_change not in PEN_CHANGES:
@@ -869,8 +1072,9 @@ def plot_request(values):
             analysis = None
 
     options = {'file': name, 'port': port, 'baudrate': str(baudrate), 'flowControl': flowControl,
-               'tasmota': values.get('tasmota') or '', 'timelapse': values.get('timelapse') or '',
+               'tasmota': values.get('tasmota') or '', 'timelapse': 'on' if values.get('timelapse') == 'on' else '',
                'pens': pens_text, 'pen_change': pen_change}
+    options.update(line)
     return {'name': name, 'path': path, 'options': options, 'pens': pens, 'analysis': analysis}, None
 
 
@@ -1219,6 +1423,113 @@ def delete_preset():
     return 'Deleted preset ' + name
 
 
+# Plotter profiles: the plotters that ship with this version and the user's own (userdata/plotters.json)
+@app.route('/plotters', methods=['GET'])
+def list_plotters():
+    return jsonify(plotters.all())
+
+
+# Save the plotter settings of the form as a profile (the same id replaces it)
+@app.route('/plotters', methods=['POST'])
+def save_plotter():
+    profile, error = plotters.clean_profile(request.form.to_dict())
+    if error:
+        return error, 400
+    # The id comes from the name here: a form cannot pick one that is not the name's
+    profile['id'] = plotters.slug(profile['name'])
+    error = plotters.unknown_device([profile], DEVICES | vpype_devices.ids()) or plotters.save(profile)
+    if error:
+        return error, 400
+    return 'Saved plotter ' + profile['name']
+
+
+@app.route('/plotters/delete', methods=['POST'])
+def delete_plotter():
+    if not plotters.delete(request.form.get('id') or ''):
+        return 'No such plotter of yours (the ones that come with the program cannot be deleted)', 404
+    return 'Deleted the plotter'
+
+
+# Download plotters as a file to share: one (`id`), or all of the user's own
+@app.route('/plotters/export', methods=['GET'])
+def export_plotters():
+    ident = request.args.get('id')
+    if ident:
+        profile = plotters.get(ident)
+        profiles = [profile] if profile else []
+    else:
+        profiles = plotters.custom()
+    if not profiles:
+        return 'There are no plotters to export', 404
+    name = ident if ident and plotters.ID_RE.fullmatch(ident) else 'plotters'
+    return Response(plotters.export_text(profiles), mimetype='application/json', headers={
+        'Content-Disposition': 'attachment; filename="webplotter-{}-{}.json"'.format(name, time.strftime('%Y%m%d'))})
+
+
+# Add the plotters of an exported file to the user's own. One invalid plotter refuses the whole file.
+@app.route('/plotters/import', methods=['POST'])
+def import_plotters():
+    upload = request.files.get('plotters')
+    if upload is None:
+        return 'No file received', 400
+    try:
+        profiles = plotters.parse_export(upload.read(plotters.MAX_FILE_BYTES + 1))
+    except plotters.PlotterError as e:
+        return str(e), 400
+    if not profiles:
+        return 'The file has no plotters', 400
+    error = plotters.unknown_device(profiles, DEVICES | vpype_devices.ids())
+    if error:
+        return error, 400
+    count, error = plotters.save_many(profiles)
+    if error:
+        return error, 400
+    return jsonify({'imported': count, 'names': [profile['name'] for profile in profiles]})
+
+
+# vpype devices of the user: plotters vpype does not know. The text is vpype's own device format (TOML).
+@app.route('/vpype_devices', methods=['GET'])
+def list_vpype_devices():
+    return jsonify({'devices': vpype_devices.describe(), 'builtin': sorted(vpype_devices.builtin_ids())})
+
+
+# Save the devices in some text (one device, or several); `replace` is the id of the device being edited
+@app.route('/vpype_devices', methods=['POST'])
+def save_vpype_device():
+    try:
+        saved = vpype_devices.save(request.form.get('text') or '', request.form.get('replace') or None)
+    except vpype_devices.DeviceError as e:
+        return str(e), 400
+    return jsonify({'saved': saved})
+
+
+@app.route('/vpype_devices/delete', methods=['POST'])
+def delete_vpype_device():
+    if not vpype_devices.delete(request.form.get('id') or ''):
+        return 'No such device of yours (the ones that come with vpype cannot be deleted)', 404
+    return 'Deleted the device'
+
+
+# The text of a device from the quick form
+@app.route('/vpype_devices/generate', methods=['POST'])
+def generate_vpype_device():
+    values = request.form.to_dict()
+    values['sizes'] = request.form.getlist('sizes')
+    try:
+        return jsonify({'text': vpype_devices.generate(values)})
+    except vpype_devices.DeviceError as e:
+        return str(e), 400
+
+
+# A device that comes with vpype, as text to start a device of your own from
+@app.route('/vpype_devices/template', methods=['GET'])
+def vpype_device_template():
+    text = vpype_devices.builtin_text(request.args.get('base') or '')
+    if text is None:
+        return 'vpype has no such device here', 404
+    return jsonify({'text': text})
+
+
 # Start converting file using vpype
 @app.route('/start_conversion', methods=['POST'])
 def start_conversion():
@@ -1429,6 +1740,15 @@ CONFIG_FIELDS = {
     'timelapse_enable': ('timelapse', 'timelapse_enable', _is_bool),
     'timelapse_auto_start': ('timelapse', 'timelapse_auto_start', _is_bool),
     'timelapse_preview': ('timelapse', 'timelapse_preview', _is_bool),
+    'timelapse_keep_frames': ('timelapse', 'timelapse_keep_frames', _is_bool),
+    'timelapse_source': ('timelapse', 'timelapse_source', lambda v: v in lapse.SOURCES),
+    'timelapse_url': ('timelapse', 'timelapse_url', lambda v: v == '' or lapse.URL_RE.fullmatch(v) is not None),
+    'timelapse_interval': ('timelapse', 'timelapse_interval', lambda v: re.fullmatch(r'[0-9]{1,4}', v) is not None and 1 <= int(v) <= 3600),
+    'timelapse_fps': ('timelapse', 'timelapse_fps', lambda v: re.fullmatch(r'[0-9]{1,2}', v) is not None and 1 <= int(v) <= 60),
+    'timelapse_tail': ('timelapse', 'timelapse_tail', _is_seconds),
+    'buttons_enable': ('buttons', 'buttons_enable', _is_bool),
+    'button_start_action': ('buttons', 'button_start_action', lambda v: v in buttons.ACTIONS),
+    'button_stop_action': ('buttons', 'button_stop_action', lambda v: v in buttons.ACTIONS),
     'notify_start': ('notifications', 'notify_start', _is_bool),
     'notify_finish': ('notifications', 'notify_finish', _is_bool),
     'notify_error': ('notifications', 'notify_error', _is_bool),
@@ -1442,22 +1762,26 @@ CONFIG_FIELDS = {
     'mqtt_password': ('notifications', 'mqtt_password', _is_text),
     'plotter_name': ('plotter', 'name', _is_text),
     'plotter_port': ('plotter', 'port', lambda v: v == '' or PORT_RE.fullmatch(v) is not None),
-    'plotter_device': ('plotter', 'device', lambda v: v in DEVICES),
+    'plotter_device': ('plotter', 'device', lambda v: plotters.DEVICE_ID_RE.fullmatch(v) is not None),
     'plotter_baudrate': ('plotter', 'baudrate', valid_baudrate),
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
     'plotter_pen_change': ('plotter', 'pen_change', lambda v: v in PEN_CHANGES),
+    # The plotter profile the page starts with (its settings are filled in on top of the ones above)
+    'plotter_profile': ('plotter', 'profile', lambda v: v == '' or plotters.ID_RE.fullmatch(v) is not None),
     # Basic auth needs both; HTTP basic auth cannot have a ':' in the user name
     'auth_username': ('auth', 'username', lambda v: _is_text(v) and ':' not in v),
     'auth_password': ('auth', 'password', _is_text),
 }
 
 # Shown when an older config.ini does not have the setting yet
-CONFIG_DEFAULTS = {'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
+CONFIG_DEFAULTS = {'buttons_enable': 'false', 'button_start_action': 'start', 'button_stop_action': 'stop',
+                   'timelapse_source': 'url', 'timelapse_interval': '10', 'timelapse_fps': '25', 'timelapse_tail': '10',
+                   'timelapse_keep_frames': 'false', 'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
                    'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true',
                    'notify_progress_every': '0', 'mqtt_port': '1883', 'mqtt_topic': 'webplotter'}
 
 # Never sent back to the browser: an empty password in a save means "keep the current one"
-WRITE_ONLY_FIELDS = {'auth_password', 'mqtt_password'}
+WRITE_ONLY_FIELDS = {'auth_password', 'mqtt_password', 'telegram_token'}
 
 def store_config(updates):
     """Set {(section, option): value} in the live config and write config.ini. The caller holds
@@ -1509,8 +1833,16 @@ def save_configfile():
                     if config.has_section('auth'):
                         config.remove_section('auth')
 
+            if request.form.get('telegram_token_remove') == 'true':
+                # An empty token field keeps the current one, so removing it is a choice of its own
+                updates[('telegram', 'telegram_token')] = ''
+
             store_config(updates)
 
+        if any(section == 'buttons' for section, option in updates):
+            setup_buttons()
+            if button_problem:
+                return 'Configuration updated, but the buttons do not work: ' + button_problem
         return 'Configuration Updated'
 
     output = {field: config_value(section, option) or CONFIG_DEFAULTS.get(field, '')
@@ -1518,6 +1850,7 @@ def save_configfile():
               if field not in WRITE_ONLY_FIELDS}
     output['auth_password_set'] = bool(config_value('auth', 'password'))
     output['mqtt_password_set'] = bool(config_value('notifications', 'mqtt_password'))
+    output['telegram_token_set'] = bool(notification._setting('telegram_token'))
     return jsonify(output)
 
 # ////////////////////////////////////////////////////////////////////////////
@@ -1531,7 +1864,7 @@ def download_backup():
     os.close(handle)
     try:
         uploads = app.config['UPLOAD_PATH'] if request.args.get('uploads') == '1' else None
-        backup.create(path, 'config.ini', history.database, uploads)
+        backup.create(path, 'config.ini', history.database, uploads, plotters.USER_FILE, vpype_devices.USER_FILE)
         size = os.path.getsize(path)
     except Exception:
         os.remove(path)
@@ -1605,10 +1938,23 @@ def restore_backup():
                 members = backup.inspect(archive)
                 updates = config_from_backup(archive) if backup.CONFIG in members else {}
                 database = backup.extract_database(archive, folder) if backup.DATABASE in members else None
+                profiles = backup.read_plotters(archive) if backup.PLOTTERS in members else None
+                devices = backup.read_devices(archive) if backup.DEVICES in members else None
+                if profiles is not None:
+                    known = DEVICES | set(devices if devices is not None else vpype_devices.custom())
+                    error = plotters.unknown_device(profiles, known)
+                    if error:
+                        raise backup.BackupError('The plotters in the backup cannot be used: ' + error)
             except backup.BackupError as e:
                 return str(e), 400
 
-            restored = {'config': len(updates), 'history': False, 'uploads': 0}
+            restored = {'config': len(updates), 'history': False, 'uploads': 0,
+                        'plotters': len(profiles) if profiles is not None else 0,
+                        'devices': len(devices) if devices is not None else 0}
+            if profiles is not None:
+                plotters.replace_custom(profiles)
+            if devices is not None:
+                vpype_devices.replace_all(devices)
             if updates:
                 with config_lock:
                     store_config(updates)
@@ -1630,8 +1976,9 @@ def restore_backup():
                 if path:
                     backup.extract_upload(archive, name, path)
                     restored['uploads'] += 1
-        socketio.emit('status_log', {'data': 'Restored a backup: {} settings, {}, {} files'.format(
-            restored['config'], 'the history' if restored['history'] else 'no history', restored['uploads'])})
+        socketio.emit('status_log', {'data': 'Restored a backup: {} settings, {}, {} plotters, {} vpype devices, {} files'.format(
+            restored['config'], 'the history' if restored['history'] else 'no history', restored['plotters'],
+            restored['devices'], restored['uploads'])})
         broadcast_queue()
         return jsonify(restored)
     except (OSError, sqlite3.Error) as e:
@@ -1671,5 +2018,6 @@ def connection(message):
     print('Client connected')
 
 if __name__ == "__main__":
+    setup_buttons()
     # use_reloader is off even in debug mode: it would restart the server mid-plot
     socketio.run(app, host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False, allow_unsafe_werkzeug=True)

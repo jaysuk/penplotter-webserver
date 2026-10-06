@@ -158,6 +158,18 @@ def test_the_mqtt_password_is_never_sent_back(app, client):
     assert client.get('/save_configfile').get_json()['mqtt_host'] == 'broker.local'
 
 
+def test_the_telegram_token_is_never_sent_back(app, client):
+    save(client, telegram_token='123:abc', telegram_chatid='42')
+    shown = client.get('/save_configfile').get_json()
+    assert 'telegram_token' not in shown and '123:abc' not in str(shown)
+    assert shown['telegram_token_set'] is True and shown['telegram_chatid'] == '42'
+    save(client, telegram_token='')                         # empty keeps it
+    assert app.main.notification.channels() == ['Telegram']
+    save(client, telegram_token='', telegram_token_remove='true')
+    assert client.get('/save_configfile').get_json()['telegram_token_set'] is False
+    assert app.main.notification.channels() == []
+
+
 def test_defaults_are_shown_for_an_old_config(client):
     shown = client.get('/save_configfile').get_json()
     assert shown['notify_start'] == 'true' and shown['notify_progress_every'] == '0' and shown['mqtt_port'] == '1883'

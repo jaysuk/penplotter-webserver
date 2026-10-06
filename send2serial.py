@@ -136,11 +136,38 @@ def listComPorts():
     return dict(name='ports', content=list(links) + others)
 
 
-def getBaudRate(t_port):
+# Serial line options (see plotters.LINE_FIELDS). None leaves a line to what the flow control needs.
+LINE_DEFAULTS = {'bytesize': serial.EIGHTBITS, 'parity': serial.PARITY_NONE, 'stopbits': serial.STOPBITS_ONE,
+                 'xonxoff': None, 'rtscts': None, 'dsrdtr': None, 'dtr': None, 'rts': None,
+                 'timeout': None, 'open_delay': 0}
+
+
+def serial_settings(baud, flowControl, line=None):
+    """The pyserial settings for a flow control, with the user's line options on top. Returns
+    (keyword arguments for serial.Serial, the options used)."""
+    line = dict(LINE_DEFAULTS, **{key: value for key, value in (line or {}).items() if key in LINE_DEFAULTS})
+    # What each flow control needs. CTS is polled by hand (see sendToPlotter) because of a pyserial bug
+    # with rtscts, and a CalComp plot asks the plotter itself, with a short timeout to stay responsive.
+    needs = {'xonxoff': flowControl == 'XON/XOFF', 'rtscts': flowControl == 'HP-IB', 'dsrdtr': False}
+    timeout = 0.1 if flowControl == CAL_POLL else 2.0
+    if line['timeout'] is not None and flowControl != CAL_POLL:
+        timeout = line['timeout']
+    kwargs = {'baudrate': 9600 if flowControl == 'HP-IB' else baud, 'bytesize': line['bytesize'],
+              'parity': line['parity'], 'stopbits': line['stopbits'], 'timeout': timeout}
+    for key, needed in needs.items():
+        value = needed if line[key] is None else line[key]
+        if value or line[key] is not None:
+            kwargs[key] = value
+    return kwargs, line
+
+
+def getBaudRate(t_port, line=None):
     baud_dict = [9600, 19200, 38400, 4800, 2400, 1200]
     message = 'IN;OI;OE'
+    line = dict(LINE_DEFAULTS, **(line or {}))
     try:
-        ser = serial.Serial(port=t_port, timeout=0.3)
+        ser = serial.Serial(port=t_port, timeout=0.3, bytesize=line['bytesize'], parity=line['parity'],
+                            stopbits=line['stopbits'])
     except PORT_ERRORS as e:
         print(repr(e))
         return None
@@ -161,23 +188,32 @@ def getBaudRate(t_port):
     return None
 
 
-def open_port(socketio, port, baud, flowControl, init=True):
+def open_port(socketio, port, baud, flowControl, init=True, line=None):
     """Open and initialise the serial port for the given flow control. Returns None on failure.
+
+    `line` holds the serial line options (bits, parity, stop bits, handshake lines, DTR and RTS,
+    timeout and a pause after opening); what it leaves out follows from the flow control.
 
     With `init` false the plotter is not set up (no IN;), so it keeps its state: that is for
     moving the pen by hand."""
     try:
-        if flowControl == 'XON/XOFF':
-            tty = serial.Serial(port=port, baudrate=baud, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, xonxoff=True, timeout=2.0)
-            if init:
-                tty.write(b'IN;\033.I80;;17:\033.N10;19:\033.@;0:')
-        elif flowControl == 'HP-IB':
-            tty = serial.Serial(port=port, baudrate=9600, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, rtscts=True, timeout=2.0)
-        else:
-            # CTS is polled by hand (see sendToPlotter) because of a pyserial bug with rtscts
-            tty = serial.Serial(port=port, baudrate=baud, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, timeout=2.0)
-            if init:
-                tty.write(b'IN;\033.R')
+        kwargs, line = serial_settings(baud, flowControl, line)
+        # Without a port pyserial does not open yet, so DTR and RTS can be set first (some adapters
+        # and boards reset or power up when DTR rises). Linux still raises both for an instant on open.
+        tty = serial.Serial(**kwargs)
+        tty.port = port
+        if line['dtr'] is not None:
+            tty.dtr = line['dtr']
+        if line['rts'] is not None:
+            tty.rts = line['rts']
+        tty.open()
+        if line['open_delay']:
+            time.sleep(line['open_delay'])
+        if init:
+            if flowControl == 'XON/XOFF':
+                tty.write(b'IN;.I80;;17:.N10;19:.@;0:')
+            elif flowControl not in ('HP-IB', CAL_POLL):
+                tty.write(b'IN;.R')
                 time.sleep(0.2)
         return tty
     except PORT_ERRORS as e:
@@ -186,8 +222,34 @@ def open_port(socketio, port, baud, flowControl, init=True):
         return None
 
 
+# pyserial's write() cannot be interrupted once the port's output queue is full: it waits (or, with a
+# non-blocking port, spins) until the plotter takes data, and never looks at the Stop button. A plotter
+# that holds the line (XOFF, switched off, out of paper) would leave the sender, and the plot lock, stuck
+# for good. So the queue is kept short (the kernel's holds about 4 KB) and every write waits for room first.
+WRITE_BACKLOG = 1024
+
+
+def wait_for_room(tty):
+    """Wait until the port's output queue has room. False when Stop was pressed meanwhile."""
+    while globals.printing:
+        if getattr(tty, 'out_waiting', 0) <= WRITE_BACKLOG:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def discard_unsent(tty):
+    """Drop what the port has not sent yet (best effort): a stopped plot must not wait for it, and
+    a plotter that is holding the line would never take it."""
+    try:
+        tty.reset_output_buffer()
+    except PORT_ERRORS + (AttributeError,) as e:
+        print(repr(e))
+
+
 def abort_plot(tty):
     """Stop the plotter drawing what is already in its buffer (best effort)."""
+    discard_unsent(tty)       # the abort must not queue up behind plot data
     try:
         tty.write(b'\033.K')  # abort graphics instruction, flushes the plotter's buffer
         tty.write(b'PU;')     # pen up
@@ -200,18 +262,51 @@ def is_cal(path):
     return str(path).lower().endswith('.cal')
 
 
-# A .cal plot is a plain stream: the plotter's own XON/XOFF handshake is the only flow control
-CAL_FLOW_CONTROLS = ('XON/XOFF', 'NONE')
+# A .cal plot is a plain stream, so there are no buffer queries: either the plotter's own XON/XOFF handshake, or
+# 'CalComp', where the server asks the plotter how full its buffer is (see cal_buffer_empty) before every chunk
+CAL_POLL = 'CalComp'
+CAL_FLOW_CONTROLS = ('XON/XOFF', 'NONE', CAL_POLL)
 CAL_PEN_UP = b'H;'
 
+# The Model 84's default I/O characters (handbook 3.14.1 and 3.14.4). Its buffer is 1024 bytes and it answers a
+# Ctrl-Q request with Ctrl-A when less than 25 % is used and Ctrl-Z when 75 % or more is. It also sends Ctrl-S and
+# Ctrl-Q by itself as the buffer fills and drains; those are not answers.
+CAL_STATUS_REQUEST = b'\x11'
+CAL_REPLY_EMPTY, CAL_REPLY_FULL = 0x01, 0x1A
+CAL_POLL_CHUNK = 256        # bytes to send after an "empty" answer: 1024 - 768, safe even if "empty" only means "under 75 %"
+CAL_ANSWER_S = 1.0          # how long to wait for the answer to one request
+CAL_RETRY_S = 0.05          # pause before asking again after "full"
 
-def run_commands(socketio, port, baud, flowControl, commands, query=None):
+
+def cal_flow_allowed(flowControl):
+    """Whether a .cal file may be sent with this flow control (the UI's 'None' counts as 'NONE')."""
+    flowControl = str(flowControl)
+    return ('NONE' if flowControl.upper() == 'NONE' else flowControl) in CAL_FLOW_CONTROLS
+
+
+def cal_buffer_empty(tty, answer_s=None):
+    """Ask a CalComp plotter how full its buffer is: True for "empty", False for "full", None for no answer."""
+    answer_s = CAL_ANSWER_S if answer_s is None else answer_s
+    tty.reset_input_buffer()          # an old answer, or the plotter's own Ctrl-S / Ctrl-Q, is not this answer
+    tty.write(CAL_STATUS_REQUEST)
+    deadline = time.time() + answer_s
+    while time.time() < deadline:
+        got = tty.read(1)
+        if got:
+            if got[0] == CAL_REPLY_EMPTY:
+                return True
+            if got[0] == CAL_REPLY_FULL:
+                return False
+    return None
+
+
+def run_commands(socketio, port, baud, flowControl, commands, query=None, line=None):
     """Send a few short commands to an idle plotter, such as moving the pen.
 
     `query` (for example b'OA;') is sent last and its answer returned. Raises HPGLError when the
     plotter does not answer; returns None when the port cannot be opened (the reason goes to
     `socketio` as an error event). The caller must make sure no plot is running."""
-    tty = open_port(socketio, port, baud, flowControl, init=False)
+    tty = open_port(socketio, port, baud, flowControl, init=False, line=line)
     if tty is None:
         return None
     try:
@@ -253,7 +348,7 @@ def sleep_while_printing(seconds):
         time.sleep(min(0.05, max(end - time.time(), 0)))
 
 
-def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_buffer, hpglfile, target):
+def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_buffer, hpglfile, target, line=None):
     """The serial connection dropped in the middle of a plot (the adapter was unplugged, the cable
     came loose). Hold the plot, open the port again with growing pauses, then wait until the user
     has checked the plotter and pressed Resume.
@@ -282,7 +377,7 @@ def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_b
         attempt += 1
         if not globals.printing:
             break
-        new_tty = open_port(_Quiet(), port, baud, flowControl)
+        new_tty = open_port(_Quiet(), port, baud, flowControl, line=line)
         if new_tty is None and time.time() - started > RECONNECT_GIVE_UP:
             socketio.emit('error', {'data': 'Could not connect to the plotter again: the plot is given up.'})
             globals.clear_wait()
@@ -323,11 +418,12 @@ def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_b
     return new_tty, bufsz, offset, preamble
 
 
-def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0):
+def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0, line=None):
     """Stream an HPGL file to the plotter. Returns True if the plot finished or was stopped.
 
     `analysis` (from hpgl_analysis) gives the time left. With `pen_pause` the plot also holds
-    back at every pen change until it is resumed, so the pen can be swapped by hand."""
+    back at every pen change until it is resumed, so the pen can be swapped by hand. `line` holds the
+    serial line options (see open_port)."""
 
     PLOTTER_NAME = config.get('plotter', 'name', fallback='Plotter')
     notify_name = PLOTTER_NAME.replace(' ', '-')
@@ -337,12 +433,15 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         flowControl = 'NONE'
 
     cal = is_cal(hpglfile)
-    if cal and flowControl not in CAL_FLOW_CONTROLS:
-        socketio.emit('error', {'data': '.cal files need XON/XOFF or no flow control'})
+    if cal and not cal_flow_allowed(flowControl):
+        socketio.emit('error', {'data': '.cal files need XON/XOFF, CalComp or no flow control'})
+        return False
+    if flowControl == CAL_POLL and not cal:
+        socketio.emit('error', {'data': 'CalComp flow control is for .cal files'})
         return False
 
     # Only plotters that can report their buffer size and free space support buffer based flow control
-    use_buffer = flowControl not in ('HP-IB', 'XON/XOFF', 'NONE')
+    use_buffer = flowControl not in ('HP-IB', 'XON/XOFF', 'NONE', CAL_POLL)
 
     # A Stop that arrived before the sender got going must not be undone by starting
     globals.printing = not globals.stop_requested
@@ -365,7 +464,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         hpgl = open(hpglfile, 'rb')
 
         # A CalComp plotter would not understand the HP-GL set-up or the identification query
-        tty = open_port(socketio, port, baud, flowControl, init=not cal)
+        tty = open_port(socketio, port, baud, flowControl, init=not cal, line=line)
         if tty is None:
             return False
 
@@ -393,6 +492,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         last_stop = 0           # offset of the last pen change that was passed
 
         remaining = None
+        cal_room = 0            # CalComp flow control: bytes the plotter has said it has room for
 
         def send_eta(offset):
             nonlocal last_eta, remaining
@@ -455,6 +555,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                             socketio.emit('buffer_space', {'data': str(bufsp)})
                         if not globals.printing:
                             break
+                    if not wait_for_room(tty):
+                        break
                     tty.write(b'PU;')
                     globals.wait_reason = 'pen_change'
                     globals.wait_pen = pen
@@ -474,6 +576,25 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                     size = 30
                 if pen_stops:
                     size = min(size, pen_stops[0][0] - total_bytes_written)    # stop exactly at the pen change
+                if flowControl == CAL_POLL:
+                    if cal_room <= 0:
+                        # Ask before sending: after an "empty" answer 256 bytes always fit, however much the USB
+                        # adapter or the driver still has queued, so the plotter's buffer cannot overflow
+                        state = False
+                        while globals.printing and not globals.paused:
+                            state = cal_buffer_empty(tty)
+                            if state is not False:
+                                break
+                            time.sleep(CAL_RETRY_S)
+                        if not globals.printing or globals.paused:
+                            continue            # Stop or Pause arrived while waiting: the top of the loop deals with it
+                        if state is None:
+                            socketio.emit('error', {'data': 'The plotter did not answer the buffer status request '
+                                                            '(Ctrl-Q). Check the cable, the baud rate and that it is '
+                                                            'online, or use XON/XOFF flow control.'})
+                            return False
+                        cal_room = CAL_POLL_CHUNK
+                    size = min(size, cal_room)
                 if pending:
                     data, pending = pending[:size], pending[size:]
                     from_file = False
@@ -509,7 +630,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                     if bufsp < bufsz / 2:
                         time.sleep(0.1)
 
+                if not wait_for_room(tty):
+                    break           # Stop was pressed while the plotter was not taking data
                 tty.write(data)
+                cal_room -= len(data)
                 if from_file:
                     total_bytes_written += bufsz_read
                 last_len = bufsz_read
@@ -572,7 +696,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                 else:
                     unprocessed = REWIND_HPIB if flowControl == 'HP-IB' else REWIND_NO_FEEDBACK
                 result = reconnect(socketio, notify_name, e, tty, port, baud, flowControl, use_buffer, hpglfile,
-                                   max(total_bytes_written - unprocessed, last_stop, 0))
+                                   max(total_bytes_written - unprocessed, last_stop, 0), line=line)
                 if result == 'failed':
                     return False
                 if result == 'stopped':
@@ -591,6 +715,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
             if use_buffer and tty is not None:
                 abort_plot(tty)
             elif cal and tty is not None:
+                discard_unsent(tty)
                 try:
                     tty.write(CAL_PEN_UP)   # queued behind what the plotter has buffered
                 except PORT_ERRORS as e:
@@ -609,4 +734,9 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         if hpgl is not None:
             hpgl.close()
         if tty is not None:
-            tty.close()
+            if not finished:
+                discard_unsent(tty)     # close() would wait for it (up to 30 s) while the plot lock is held
+            try:
+                tty.close()
+            except PORT_ERRORS as e:
+                print(repr(e))

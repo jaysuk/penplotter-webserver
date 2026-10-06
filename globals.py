@@ -27,6 +27,7 @@ drawn_seconds = None     # time spent sending the last plot, without pauses (for
 sent_offset = 0          # bytes of the file written to the plotter so far
 cursor_ok = False        # the bytes sent are offsets in the file in the list (no chosen pens, not resumed)
 buffer_used = 0          # of those, the bytes the plotter is known to still hold (buffer flow control only)
+timelapse_id = None      # the timelapse being recorded for this plot, if any
 
 
 def initialize():
@@ -49,6 +50,7 @@ def initialize():
 def reset_plot_state():
     """Forget the previous plot's log and progress (called when a new plot starts)."""
     global plot_progress, plot_bytes, plot_buffer_size, plot_eta, drawn_seconds, sent_offset, buffer_used, cursor_ok
+    global timelapse_id
     with state_lock:
         plot_log.clear()
         plot_progress = 0
@@ -59,6 +61,7 @@ def reset_plot_state():
         sent_offset = 0
         buffer_used = 0
         cursor_ok = False
+        timelapse_id = None
 
 
 def clear_wait():
@@ -98,6 +101,7 @@ def plot_state(running, file):
             'file': file if running else None,
             'queue_active': queue_active,
             'cursor_ok': cursor_ok if running else False,
+            'timelapse': timelapse_id if running else None,
             'progress': plot_progress,
             'bytes_written': plot_bytes,
             'buffer_size': plot_buffer_size if running else None,

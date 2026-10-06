@@ -293,6 +293,9 @@ if [ ! -d "$dir" ] ; then
             poppler-utils \
             hp2xx || die "Failed to install system packages. Exiting"
 
+    # Only the timelapse needs it, and it is large: a failure is not fatal
+    run_spin "Installing ffmpeg (timelapse videos)" env DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C sudo apt-get install -qq -y -o DPkg::Lock::Timeout=300 ffmpeg || warn "Could not install ffmpeg, so a timelapse keeps its pictures but no video is made"
+
     step "Downloading Web Plotter ($BRANCH branch) from GitHub"
     if run_spin "Checking the $BRANCH branch exists" env GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code --heads "$git" "$BRANCH"; then
         run_spin "Downloading to $dir" env GIT_TERMINAL_PROMPT=0 git clone -q -b "$BRANCH" "$git" "$dir" || die "Download failed"
@@ -362,6 +365,20 @@ else
         ok "config.ini created"
     fi
 
+    # Plotters added by the user (userdata/plotters.json)
+    if [ -d "$dir/userdata" ]; then
+        rm -rf "$new/userdata"
+        cp -a "$dir/userdata" "$new/userdata" || { rm -rf "$new"; die "Could not copy your plotters, nothing was changed."; }
+        ok "your plotters kept"
+    fi
+
+    # Recorded timelapses
+    if [ -d "$dir/timelapse" ]; then
+        rm -rf "$new/timelapse"
+        cp -a "$dir/timelapse" "$new/timelapse" || { rm -rf "$new"; die "Could not copy your timelapses, nothing was changed."; }
+        ok "timelapses kept"
+    fi
+
     if [ -e "$dir/history.db" ]; then
         cp -a "$dir/history.db" "$new/history.db" || { rm -rf "$new"; die "Could not copy your plot history, nothing was changed."; }
         ok "plot history kept"
@@ -374,6 +391,11 @@ else
     # Added after the first release: PDF import needs it, nothing else does
     if ! command -v pdftocairo >/dev/null 2>&1; then
         run_spin "Installing poppler-utils (PDF import)" env DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C sudo apt-get install -qq -y -o DPkg::Lock::Timeout=300 poppler-utils || warn "Could not install poppler-utils, so PDF files cannot be imported"
+    fi
+
+    # Added after the first release: timelapse videos need it, nothing else does
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        run_spin "Installing ffmpeg (timelapse videos)" env DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C sudo apt-get install -qq -y -o DPkg::Lock::Timeout=300 ffmpeg || warn "Could not install ffmpeg, so a timelapse keeps its pictures but no video is made"
     fi
 
     step "Updating Python packages"

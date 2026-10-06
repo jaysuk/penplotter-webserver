@@ -203,6 +203,10 @@
               <a href="#" class="watchPlot uk-button uk-button-default uk-button-small uk-hidden"
                 title="See where the plotter has got to">Watch the plot</a>
             </div>
+            <figure id="timelapseLiveBox" class="uk-hidden uk-margin-small-top uk-margin-remove-bottom">
+              <img id="timelapseLive" alt="Latest timelapse picture" style="max-width: 100%">
+              <figcaption class="cs-note">Latest timelapse picture</figcaption>
+            </figure>
           </div>
         </section>
         <!-- /Status -->
@@ -247,6 +251,22 @@
 
                 <input id="fileName" name="file" type="hidden">
 
+                <div class="uk-width-1-1">
+                  <label class="uk-form-label" for="plotterProfile">Plotter</label>
+                  <div class="uk-grid uk-grid-small uk-margin-small" data-uk-grid>
+                    <div class="uk-width-expand">
+                      <select id="plotterProfile" class="uk-select" aria-label="Plotter"></select>
+                    </div>
+                    <div class="uk-width-auto">
+                      <button class="uk-button uk-button-default savePlotter" type="button"
+                        title="Save the settings below as a plotter of your own">Save</button>
+                      <button class="uk-button uk-button-default deletePlotter" type="button"
+                        title="Delete the chosen plotter (one of yours)">Delete</button>
+                    </div>
+                  </div>
+                  <p id="plotterNotes" class="cs-note uk-margin-remove" hidden></p>
+                </div>
+
                 <div class="uk-width-1-2@s">
                   <label class="uk-form-label" for="portList">COM Port</label>
                   <div class="uk-margin-small">
@@ -277,6 +297,7 @@
                       <option value="mp4200">Graptech MP4200</option>
                     </select>
                   </div>
+                  <a href="#" class="uk-text-small manageDevices" title="Add a plotter that vpype does not know, or change one you added">Not listed? Add a device</a>
                 </div>
 
                 <div class="uk-width-1-2@s">
@@ -291,6 +312,10 @@
                           <option value="4800">4800</option>
                           <option value="2400">2400</option>
                           <option value="1200">1200</option>
+                          <option value="600">600</option>
+                          <option value="300">300</option>
+                          <option value="57600">57600</option>
+                          <option value="115200">115200</option>
                         </select>
                       </div>
                       <div class="uk-width-auto uk-text-right panel-icons">
@@ -308,6 +333,7 @@
                       <option value="HP-IB">HP-IB</option>
                       <option value="XON/XOFF">XON/XOFF</option>
                       <option value="Software">Software flow ctrl.</option>
+                      <option value="CalComp">CalComp (ask plotter)</option>
                       <option value="None">None</option>
                     </select>
                   </div>
@@ -322,6 +348,76 @@
                   </div>
                 </div>
 
+                <div class="uk-width-1-1">
+                  <details class="cs-line" id="serialLine">
+                    <summary>Serial line</summary>
+                    <p class="cs-note uk-margin-small-top uk-margin-small-bottom">Leave these as they are unless the plotter's
+                      switches say otherwise. "As needed" lets the flow control decide. A pause after opening gives a plotter
+                      or board that resets when the port opens time to start. Auto detect only tries the bits, parity and
+                      stop bits set here.</p>
+                    <div class="uk-grid uk-grid-small uk-child-width-1-2 uk-child-width-1-3@m" data-uk-grid>
+                      <div>
+                        <label class="uk-form-label" for="lineBytesize">Data bits</label>
+                        <select id="lineBytesize" class="uk-select uk-form-small" name="bytesize">
+                          <option value="8">8</option><option value="7">7</option>
+                          <option value="6">6</option><option value="5">5</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineParity">Parity</label>
+                        <select id="lineParity" class="uk-select uk-form-small" name="parity">
+                          <option value="N">None</option><option value="E">Even</option><option value="O">Odd</option>
+                          <option value="M">Mark</option><option value="S">Space</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineStopbits">Stop bits</label>
+                        <select id="lineStopbits" class="uk-select uk-form-small" name="stopbits">
+                          <option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineDtr">DTR</label>
+                        <select id="lineDtr" class="uk-select uk-form-small" name="dtr">
+                          <option value="auto">As needed</option><option value="on">On</option><option value="off">Off</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineRts">RTS</label>
+                        <select id="lineRts" class="uk-select uk-form-small" name="rts">
+                          <option value="auto">As needed</option><option value="on">On</option><option value="off">Off</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineXonxoff">XON/XOFF</label>
+                        <select id="lineXonxoff" class="uk-select uk-form-small" name="xonxoff">
+                          <option value="auto">As needed</option><option value="on">On</option><option value="off">Off</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineRtscts" title="Driver handshaking with RTS and CTS. CTS/RTS flow control polls CTS itself, so leave this on 'As needed' for it.">RTS/CTS</label>
+                        <select id="lineRtscts" class="uk-select uk-form-small" name="rtscts">
+                          <option value="auto">As needed</option><option value="on">On</option><option value="off">Off</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineDsrdtr">DSR/DTR</label>
+                        <select id="lineDsrdtr" class="uk-select uk-form-small" name="dsrdtr">
+                          <option value="auto">As needed</option><option value="on">On</option><option value="off">Off</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineTimeout">Read timeout (s)</label>
+                        <input id="lineTimeout" class="uk-input uk-form-small" name="timeout" type="text" inputmode="decimal" placeholder="Default">
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="lineOpenDelay">Pause after opening (s)</label>
+                        <input id="lineOpenDelay" class="uk-input uk-form-small" name="open_delay" type="text" inputmode="decimal" placeholder="0">
+                      </div>
+                    </div>
+                  </details>
+                </div>
+
                 <input id="plotPens" name="pens" type="hidden">
                 <div id="fileInfo" class="uk-width-1-1 uk-hidden">
                   <div class="uk-alert uk-alert-primary uk-margin-remove">
@@ -334,6 +430,10 @@
                 </div>
               </fieldset>
             </form>
+
+            <div id="timelapse_control" class="uk-hidden">
+              <label class="uk-text-small"><input id="timelapse" class="uk-checkbox" type="checkbox" name="timelapse" form="plotterData"> Record a timelapse of this plot</label>
+            </div>
 
             <div id="tasmota_control" class="uk-hidden">
               <label class="uk-text-small"><input id="tasmota" class="uk-checkbox" type="checkbox" name="tasmota" form="plotterData" checked> Switch the plotter off when the plot is completed</label>
@@ -457,6 +557,7 @@
           <div class="cs-pbody">
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionTasmota"><span data-uk-icon="icon: bolt" class="uk-margin-small-right"></span>Toggle Tasmota</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionOpenConfig"><span data-uk-icon="icon: settings" class="uk-margin-small-right"></span>Edit config file</a>
+            <a href="#" class="uk-button uk-button-default uk-width-1-1 openTimelapses"><span data-uk-icon="icon: video-camera" class="uk-margin-small-right"></span>Timelapses</a>
             <div class="uk-grid-small uk-child-width-1-2" data-uk-grid>
               <div><a href="#" class="uk-button uk-button-default uk-width-1-1" uk-toggle="target: #modal-reboot"><span data-uk-icon="icon: refresh" class="uk-margin-small-right"></span>Reboot Pi</a></div>
               <div><a href="#" class="uk-button uk-button-danger uk-width-1-1" uk-toggle="target: #modal-poweroff"><span data-uk-icon="icon: sign-out" class="uk-margin-small-right"></span>Power off</a></div>
@@ -732,6 +833,10 @@
                   <option value="4800">4800</option>
                   <option value="2400">2400</option>
                   <option value="1200">1200</option>
+                  <option value="600">600</option>
+                  <option value="300">300</option>
+                  <option value="57600">57600</option>
+                  <option value="115200">115200</option>
                 </select>
               </div>
             </div>
@@ -743,9 +848,19 @@
                   <option value="HP-IB">HP-IB</option>
                   <option value="XON/XOFF">XON/XOFF</option>
                   <option value="Software">Software flow ctrl.</option>
+                  <option value="CalComp">CalComp (ask plotter)</option>
                   <option value="None">None</option>
                 </select>
               </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <label class="uk-form-label" for="plotter_profile">Default plotter</label>
+              <div class="uk-margin-small">
+                <select id="plotter_profile" class="uk-select" name="plotter_profile"></select>
+              </div>
+              <p class="cs-note uk-margin-remove">Chosen when the page opens: its device, baud rate, flow control, pen
+                changes and serial line settings replace the defaults above.</p>
             </div>
 
             <div class="uk-width-1-1">
@@ -765,7 +880,8 @@
             <div class="uk-width-1-2@s">
               <label class="uk-form-label" for="telegram_token">Telegram Token</label>
               <div class="uk-margin-small">
-                <input id="telegram_token" class="uk-input" name="telegram_token" type="input">
+                <input id="telegram_token" class="uk-input" name="telegram_token" type="password" autocomplete="new-password">
+                <label class="uk-text-small"><input id="telegram_token_remove" class="uk-checkbox" name="telegram_token_remove" type="checkbox" value="true"> Remove the saved token</label>
               </div>
             </div>
 
@@ -908,7 +1024,7 @@
 
             <div class="uk-width-1-1">
               <h5 class="uk-margin-remove">Timelapse</h5>
-              <p class="uk-text-small uk-text-muted uk-margin-remove">These are stored in config.ini but are not used by this version yet.</p>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">Takes a picture of the plotter every few seconds while it plots and makes a video from them (video needs <code>ffmpeg</code>). The camera is a picture address (for example a webcam server's snapshot link), a Raspberry Pi camera (<code>rpicam-still</code>) or a USB webcam (<code>fswebcam</code>).</p>
             </div>
 
             <div class="uk-width-1-3@s">
@@ -922,7 +1038,7 @@
             </div>
 
             <div class="uk-width-1-3@s">
-              <label class="uk-form-label" for="timelapse_auto_start">Start With Plot</label>
+              <label class="uk-form-label" for="timelapse_auto_start">Record each plot unless unticked</label>
               <div class="uk-margin-small">
                 <select id="timelapse_auto_start" class="uk-select" name="timelapse_auto_start">
                   <option value="true">True</option>
@@ -932,11 +1048,106 @@
             </div>
 
             <div class="uk-width-1-3@s">
-              <label class="uk-form-label" for="timelapse_preview">Preview</label>
+              <label class="uk-form-label" for="timelapse_preview">Show the latest picture while plotting</label>
               <div class="uk-margin-small">
                 <select id="timelapse_preview" class="uk-select" name="timelapse_preview">
                   <option value="true">True</option>
                   <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="timelapse_source">Camera</label>
+              <div class="uk-margin-small">
+                <select id="timelapse_source" class="uk-select" name="timelapse_source">
+                  <option value="url">Picture address</option>
+                  <option value="rpicam">Raspberry Pi camera</option>
+                  <option value="fswebcam">USB webcam (fswebcam)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-2-3@s">
+              <label class="uk-form-label" for="timelapse_url">Picture address (http:// or https://)</label>
+              <div class="uk-margin-small">
+                <input id="timelapse_url" class="uk-input" name="timelapse_url" type="text" maxlength="500" placeholder="http://localhost:8080/?action=snapshot" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="timelapse_interval">Seconds between pictures</label>
+              <div class="uk-margin-small">
+                <input id="timelapse_interval" class="uk-input" name="timelapse_interval" type="number" min="1" max="3600" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="timelapse_fps">Video: pictures per second</label>
+              <div class="uk-margin-small">
+                <input id="timelapse_fps" class="uk-input" name="timelapse_fps" type="number" min="1" max="60" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="timelapse_tail">Seconds to go on after the last byte</label>
+              <div class="uk-margin-small">
+                <input id="timelapse_tail" class="uk-input" name="timelapse_tail" type="number" min="0" max="600" step="1">
+              </div>
+            </div>
+
+            <div class="uk-width-1-4@s">
+              <label class="uk-form-label" for="timelapse_keep_frames">Keep the pictures after the video</label>
+              <div class="uk-margin-small">
+                <select id="timelapse_keep_frames" class="uk-select" name="timelapse_keep_frames">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <a href="#" class="testTimelapse uk-button uk-button-default uk-button-small">Take a test picture</a>
+              <a href="#" class="openTimelapses uk-button uk-button-default uk-button-small">Recorded timelapses</a>
+              <p class="uk-text-small uk-text-muted uk-margin-small-top uk-margin-remove-bottom">The test uses the saved settings: save first if you changed them.</p>
+              <img id="timelapseTest" class="uk-hidden uk-margin-small-top" alt="Test picture from the camera" style="max-width: 100%">
+            </div>
+
+            <div class="uk-width-1-1">
+              <h5 class="uk-margin-remove">Pi Plot shield buttons</h5>
+              <p class="uk-text-small uk-text-muted uk-margin-remove">The two buttons on the shield (GPIO 27 and 22). Needs the <code>gpiozero</code> package; on a Raspberry Pi 5 also <code>rpi-lgpio</code>. Leave this off without the shield.</p>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="buttons_enable">Use the buttons</label>
+              <div class="uk-margin-small">
+                <select id="buttons_enable" class="uk-select" name="buttons_enable">
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="button_start_action">Start button (GPIO 27)</label>
+              <div class="uk-margin-small">
+                <select id="button_start_action" class="uk-select" name="button_start_action">
+                  <option value="start">Resume a held plot, or start the queue</option>
+                  <option value="stop">Stop</option>
+                  <option value="pause">Pause or resume</option>
+                  <option value="none">Nothing</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="uk-width-1-3@s">
+              <label class="uk-form-label" for="button_stop_action">Stop button (GPIO 22)</label>
+              <div class="uk-margin-small">
+                <select id="button_stop_action" class="uk-select" name="button_stop_action">
+                  <option value="start">Resume a held plot, or start the queue</option>
+                  <option value="stop">Stop</option>
+                  <option value="pause">Pause or resume</option>
+                  <option value="none">Nothing</option>
                 </select>
               </div>
             </div>
@@ -977,8 +1188,17 @@
         </form>
 
         <hr>
+        <h5 class="uk-margin-remove">Your plotters</h5>
+        <p class="uk-text-small uk-text-muted uk-margin-remove">The plotters you saved are kept in userdata/plotters.json, which an update leaves alone, and are part of the backup below. Export them to a file to share or to keep, or import a file somebody sent.</p>
+        <button class="uk-button uk-button-default uk-button-small uk-margin-small-top exportPlotters" type="button">Export my plotters</button>
+        <div class="uk-margin-small-top">
+          <input id="importPlottersFile" type="file" accept=".json,application/json">
+          <button class="uk-button uk-button-default uk-button-small importPlotters" type="button">Import</button>
+        </div>
+
+        <hr>
         <h5 class="uk-margin-remove">Backup</h5>
-        <p class="uk-text-small uk-text-muted uk-margin-remove">A zip with the settings, the plot history, the presets and the queue. It includes the passwords in config.ini, so keep it private.</p>
+        <p class="uk-text-small uk-text-muted uk-margin-remove">A zip with the settings, your plotters, the plot history, the presets and the queue. It includes the passwords in config.ini, so keep it private.</p>
         <label class="uk-text-small"><input id="backupUploads" class="uk-checkbox" type="checkbox"> Include the uploaded files</label>
         <button class="uk-button uk-button-default uk-button-small uk-margin-small-left downloadBackup" type="button">Download backup</button>
         <div class="uk-margin-small-top">
@@ -989,6 +1209,102 @@
     </div>
   </div>
   <!-- config modal -->
+
+  <!-- vpype devices modal -->
+  <div id="modal-vpypeDevices" uk-modal>
+    <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
+      <div class="uk-card-header mac-browser-bar">
+        <div class="uk-grid uk-grid-small">
+          <div class="uk-width-expand">
+            <h4>vpype devices</h4>
+          </div>
+          <div class="uk-width-auto uk-text-right panel-icons">
+            <a href="#" class="uk-icon-link mac-button mac-close uk-modal-close" title="Close" data-uk-tooltip
+              data-uk-icon="icon: close"></a>
+          </div>
+        </div>
+      </div>
+      <div class="uk-modal-body">
+        <p class="uk-text-small uk-text-muted uk-margin-remove-top">vpype turns a drawing into HPGL for a <em>device</em>:
+          the size of one plotter unit, the pens, and for each paper size where the plotter starts counting. A plotter that
+          is not in the Plotting Device list needs a device of its own. They are kept in userdata/vpype_devices.toml, which
+          an update leaves alone, and are part of the backup.</p>
+
+        <h5 class="uk-margin-remove">Your devices</h5>
+        <ul id="deviceList" class="uk-list uk-list-divider uk-margin-small"></ul>
+
+        <hr>
+        <h5 id="deviceEditorTitle" class="uk-margin-remove">Add a device</h5>
+        <details id="deviceQuick" class="cs-line uk-margin-small-top" open>
+          <summary>Fill in from a few values</summary>
+          <form id="deviceQuickForm" class="uk-margin-small-top">
+            <div class="uk-grid uk-grid-small" data-uk-grid>
+              <div class="uk-width-1-1">
+                <label class="uk-form-label" for="dqName">Name</label>
+                <input id="dqName" class="uk-input uk-form-small" name="name" type="text" maxlength="60" placeholder="Graptech MP4200">
+              </div>
+              <div class="uk-width-1-2@s">
+                <label class="uk-form-label" for="dqUnit">One plotter unit is (mm)</label>
+                <input id="dqUnit" class="uk-input uk-form-small" name="unit" type="text" inputmode="decimal" value="0.025" list="dqUnits">
+                <datalist id="dqUnits"><option value="0.025"><option value="0.02488"><option value="0.01"><option value="0.1"></datalist>
+              </div>
+              <div class="uk-width-1-2@s">
+                <label class="uk-form-label" for="dqPens">Pens</label>
+                <input id="dqPens" class="uk-input uk-form-small" name="pens" type="text" inputmode="numeric" value="1">
+              </div>
+              <div class="uk-width-1-1">
+                <label class="uk-form-label" for="dqOrigin">The plotter counts from</label>
+                <select id="dqOrigin" class="uk-select uk-form-small" name="origin">
+                  <option value="botleft">The lower left corner of the paper, upwards (most HP-GL plotters)</option>
+                  <option value="topleft">The upper left corner of the paper, downwards</option>
+                </select>
+              </div>
+              <div class="uk-width-1-2@s">
+                <label class="uk-form-label" for="dqX">... plus across (mm)</label>
+                <input id="dqX" class="uk-input uk-form-small" name="origin_x" type="text" inputmode="decimal" value="0">
+              </div>
+              <div class="uk-width-1-2@s">
+                <label class="uk-form-label" for="dqY">... plus along (mm)</label>
+                <input id="dqY" class="uk-input uk-form-small" name="origin_y" type="text" inputmode="decimal" value="0">
+              </div>
+              <div class="uk-width-1-1">
+                <span class="uk-form-label">Paper sizes it can plot</span>
+                <div class="uk-grid-small uk-child-width-auto uk-grid uk-margin-small-top">
+                  <label><input class="uk-checkbox" type="checkbox" name="sizes" value="a4" checked> A4</label>
+                  <label><input class="uk-checkbox" type="checkbox" name="sizes" value="a3" checked> A3</label>
+                  <label><input class="uk-checkbox" type="checkbox" name="sizes" value="a2"> A2</label>
+                  <label><input class="uk-checkbox" type="checkbox" name="sizes" value="a1"> A1</label>
+                  <label><input class="uk-checkbox" type="checkbox" name="sizes" value="a0"> A0</label>
+                  <label><input class="uk-checkbox" type="checkbox" name="rotate_180"> Upside down</label>
+                </div>
+              </div>
+            </div>
+            <button class="uk-button uk-button-default uk-button-small uk-margin-small-top generateDevice" type="button">Write the device below</button>
+          </form>
+        </details>
+
+        <div class="uk-margin-small-top">
+          <label class="uk-form-label" for="deviceBase">Or start from one that comes with vpype</label>
+          <select id="deviceBase" class="uk-select uk-form-small">
+            <option value="">Choose a device...</option>
+          </select>
+        </div>
+
+        <label class="uk-form-label uk-margin-small-top" for="deviceText">The device, in vpype's format (TOML)</label>
+        <textarea id="deviceText" class="uk-textarea cs-mono" rows="14" spellcheck="false" autocomplete="off"
+          placeholder="[device.myplotter]&#10;name = &quot;My plotter&quot;&#10;plotter_unit_length = &quot;0.025mm&quot;&#10;pen_count = 1&#10;&#10;[[device.myplotter.paper]]&#10;name = &quot;a4&quot;&#10;..."></textarea>
+        <p id="deviceError" class="uk-text-danger uk-text-small uk-margin-small" hidden></p>
+        <p class="cs-note uk-margin-small">Paste a device somebody wrote for vpype, or load it from a file. The sizes the page offers
+          (A4 to A0) are looked up by the paper names, so a paper called <code>a4</code> is used for A4.</p>
+        <div class="uk-margin-small-top">
+          <input id="deviceFile" type="file" accept=".toml,.txt,text/plain">
+          <button class="uk-button uk-button-default uk-button-small loadDeviceFile" type="button">Load file</button>
+          <button class="uk-button uk-button-primary saveDevice uk-float-right" type="button">Save device</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- /vpype devices modal -->
 
   <!-- text drawing modal -->
   <div id="modal-createText" uk-modal>
@@ -1119,6 +1435,31 @@
   <!-- resume modal -->
 
   <!-- poweroff modal -->
+  <!-- Timelapse modal -->
+  <div id="modal-timelapse" uk-modal>
+    <div class="uk-modal-dialog uk-card uk-card-default uk-card-small mac-card">
+      <div class="uk-card-header mac-browser-bar">
+        <div class="uk-grid uk-grid-small">
+          <div class="uk-width-expand">
+            <h4>Timelapses</h4>
+          </div>
+          <div class="uk-width-auto uk-text-right panel-icons">
+            <a href="#" class="uk-icon-link updateTimelapses" title="Refresh" data-uk-tooltip data-uk-icon="icon: refresh"></a>
+            <a href="#" class="uk-icon-link mac-button mac-close uk-modal-close" title="Close" data-uk-tooltip
+              data-uk-icon="icon: close"></a>
+          </div>
+        </div>
+      </div>
+      <div class="uk-modal-body">
+        <p id="timelapseNote" class="uk-text-small uk-text-muted uk-margin-remove-top"></p>
+        <ul id="timelapseList" class="uk-list uk-list-divider uk-margin-small"></ul>
+        <p id="timelapseEmpty" class="cs-note uk-hidden">No timelapses yet.</p>
+        <video id="timelapsePlayer" class="uk-hidden uk-width-1-1" controls preload="metadata"></video>
+      </div>
+    </div>
+  </div>
+  <!-- /Timelapse modal -->
+
   <div id="modal-poweroff" uk-modal>
     <div class="uk-modal-dialog uk-modal-body">
       <h2 class="uk-modal-title">Poweroff Pi?</h2>
@@ -1215,6 +1556,12 @@
       });
 
       // The plot queue changed
+      socket.on('timelapse_frame', function (msg) {
+        showTimelapseFrame(msg.data.id);
+      });
+      socket.on('timelapse_changed', function () {
+        if (UIkit.modal('#modal-timelapse').isActive()) updateTimelapses();
+      });
       socket.on('queue_state', function (msg, cb) {
         renderQueue(msg.data);
       });
@@ -1357,6 +1704,57 @@
       // Conversion presets
       jQuery(document).on('change', '#presetList', function () {
         applyPreset(jQuery(this).val());
+      });
+
+      jQuery(document).on('change', '#plotterProfile', function () {
+        applyPlotterProfile(jQuery(this).val());
+      });
+      // vpype devices of your own
+      jQuery(document).on('click', '.manageDevices', function (e) {
+        e.preventDefault();
+        openDeviceManager();
+      });
+      jQuery(document).on('click', '.generateDevice', function (e) {
+        e.preventDefault();
+        generateDevice();
+      });
+      jQuery(document).on('change', '#deviceBase', function () {
+        deviceFromVpype(jQuery(this).val());
+      });
+      jQuery(document).on('click', '.saveDevice', function (e) {
+        e.preventDefault();
+        saveDevice();
+      });
+      jQuery(document).on('click', '.loadDeviceFile', function (e) {
+        e.preventDefault();
+        loadDeviceFile();
+      });
+      jQuery(document).on('click', '.editDevice', function (e) {
+        e.preventDefault();
+        editDevice(jQuery(this).attr('data-id'));
+      });
+      jQuery(document).on('click', '.deleteDevice', function (e) {
+        e.preventDefault();
+        deleteDevice(jQuery(this).attr('data-id'));
+      });
+      jQuery(document).on('change', '#convertData [name="device"]', function () {
+        updatePageSize();
+      });
+      jQuery(document).on('click', '.savePlotter', function (e) {
+        e.preventDefault();
+        savePlotter();
+      });
+      jQuery(document).on('click', '.deletePlotter', function (e) {
+        e.preventDefault();
+        deletePlotter();
+      });
+      jQuery(document).on('click', '.exportPlotters', function (e) {
+        e.preventDefault();
+        window.location = '/plotters/export';
+      });
+      jQuery(document).on('click', '.importPlotters', function (e) {
+        e.preventDefault();
+        importPlotters();
       });
 
       jQuery(document).on('click', '.savePreset', function (e) {
@@ -1599,6 +1997,32 @@
       jQuery(document).on('click', '.actionTasmota', function (e) {
         e.preventDefault();
         actionTasmota();
+      });
+
+      // Timelapse
+      jQuery(document).on('click', '.openTimelapses', function (e) {
+        e.preventDefault();
+        openTimelapses();
+      });
+      jQuery(document).on('click', '.updateTimelapses', function (e) {
+        e.preventDefault();
+        updateTimelapses();
+      });
+      jQuery(document).on('click', '.testTimelapse', function (e) {
+        e.preventDefault();
+        testTimelapse();
+      });
+      jQuery(document).on('click', '.timelapsePlay', function (e) {
+        e.preventDefault();
+        playTimelapse(jQuery(this).data('id'));
+      });
+      jQuery(document).on('click', '.timelapseRender', function (e) {
+        e.preventDefault();
+        renderTimelapse(jQuery(this).data('id'));
+      });
+      jQuery(document).on('click', '.timelapseDelete', function (e) {
+        e.preventDefault();
+        deleteTimelapse(jQuery(this).data('id'));
       });
 
       // Open Config.ini file editor

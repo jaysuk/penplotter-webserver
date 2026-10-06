@@ -14,10 +14,15 @@ import sqlite3
 import time
 import zipfile
 
+import plotters
+import vpype_devices
+
 FORMAT = 1
 MANIFEST = 'manifest.json'
 CONFIG = 'config.ini'
 DATABASE = 'history.db'
+PLOTTERS = 'plotters.json'
+DEVICES = 'vpype_devices.toml'
 
 UPLOAD_NAME_RE = re.compile(r'uploads/([A-Za-z0-9._-]{1,200}\.(?:svg|hpgl|cal))', re.IGNORECASE)
 MAX_MEMBERS = 5000
@@ -31,9 +36,10 @@ class BackupError(ValueError):
     """The backup is not usable. The message is for the user."""
 
 
-def create(dest, config_path, database, uploads_dir=None):
+def create(dest, config_path, database, uploads_dir=None, plotters_path=None, devices_path=None):
     """Write a backup zip to `dest`. `database` is a function returning a context manager that
-    gives a locked sqlite3 connection (history.database). Returns what the zip contains."""
+    gives a locked sqlite3 connection (history.database). `plotters_path` is the user's plotter
+    profiles and `devices_path` the user's vpype devices, if there are any. Returns what the zip contains."""
     contains = []
     with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as archive:
         if os.path.isfile(config_path):
@@ -59,6 +65,13 @@ def create(dest, config_path, database, uploads_dir=None):
             except OSError:
                 pass
 
+        if plotters_path and os.path.isfile(plotters_path):
+            archive.write(plotters_path, PLOTTERS)
+            contains.append('plotters')
+        if devices_path and os.path.isfile(devices_path):
+            archive.write(devices_path, DEVICES)
+            contains.append('devices')
+
         if uploads_dir:
             count = 0
             for name in sorted(os.listdir(uploads_dir)):
@@ -83,7 +96,7 @@ def inspect(archive):
         name = info.filename
         if name in members:
             raise BackupError('The backup lists {} twice'.format(name))
-        if name not in (MANIFEST, CONFIG, DATABASE) and not UPLOAD_NAME_RE.fullmatch(name):
+        if name not in (MANIFEST, CONFIG, DATABASE, PLOTTERS, DEVICES) and not UPLOAD_NAME_RE.fullmatch(name):
             raise BackupError('The backup holds something that is not part of a web plotter backup')
         if info.file_size > MAX_MEMBER_BYTES:
             raise BackupError('{} is too large'.format(name))
@@ -119,6 +132,23 @@ def read_config(archive):
     except (UnicodeDecodeError, configparser.Error):
         raise BackupError('The settings in the backup cannot be read')
     return parser
+
+
+def read_plotters(archive):
+    """The plotter profiles in the backup, checked: a list. Raises BackupError."""
+    try:
+        return plotters.parse_export(_read(archive, PLOTTERS, plotters.MAX_FILE_BYTES))
+    except plotters.PlotterError as e:
+        raise BackupError('The plotters in the backup cannot be used: ' + str(e))
+
+
+def read_devices(archive):
+    """The user's vpype devices in the backup, checked: {id: device}. Raises BackupError."""
+    try:
+        # Not checked against vpype's own names: the backup may come from another vpype version
+        return vpype_devices.parse(_read(archive, DEVICES, vpype_devices.MAX_BYTES))
+    except vpype_devices.DeviceError as e:
+        raise BackupError('The vpype devices in the backup cannot be used: ' + str(e))
 
 
 def extract_database(archive, folder):

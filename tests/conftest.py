@@ -15,15 +15,15 @@ import pytest
 import fake_serial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'backup.py', 'plot_queue.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py', 'text_drawing.py', 'vpype_plugins.py']
-APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'backup', 'plot_queue', 'hpgl_analysis', 'plotter_control', 'presets', 'text_drawing', 'vpype_plugins', 'convert_vpype']
+SOURCES = ['main.py', 'send2serial.py', 'config.py', 'notification.py', 'tasmota.py', 'globals.py', 'history.py', 'backup.py', 'plot_queue.py', 'hpgl_analysis.py', 'plotter_control.py', 'presets.py', 'text_drawing.py', 'vpype_plugins.py', 'plotters.py', 'vpype_devices.py', 'timelapse.py', 'buttons.py']
+APP_MODULES = ['main', 'send2serial', 'config', 'notification', 'tasmota', 'globals', 'history', 'backup', 'plot_queue', 'hpgl_analysis', 'plotter_control', 'presets', 'text_drawing', 'vpype_plugins', 'plotters', 'vpype_devices', 'timelapse', 'buttons', 'convert_vpype']
 
 
 @pytest.fixture(scope='session')
 def env(tmp_path_factory):
     """Import the app once, from a temporary copy, and return its modules."""
     work = tmp_path_factory.mktemp('app')
-    for name in SOURCES:
+    for name in SOURCES + ['plotters_builtin.json']:
         shutil.copy(os.path.join(ROOT, name), work)
     shutil.copytree(os.path.join(ROOT, 'templates'), work / 'templates')
     (work / 'uploads').mkdir()
@@ -75,13 +75,17 @@ def env(tmp_path_factory):
     import hpgl_analysis
     import plotter_control
     import presets
+    import plotters
+    import vpype_devices
+    import timelapse
+    import buttons
 
     notification.telegram_sendNotification = lambda message: False
     notification.SYNC = True        # deliver in the test's own thread
 
     yield types.SimpleNamespace(
         dir=work, main=main, send2serial=send2serial, tasmota=tasmota,
-        globals=app_globals, history=history, queue=plot_queue, hpgl=hpgl_analysis, control=plotter_control, presets=presets, convert_stub=stub, serial=fake_serial)
+        globals=app_globals, history=history, queue=plot_queue, hpgl=hpgl_analysis, control=plotter_control, presets=presets, plotters=plotters, devices=vpype_devices, timelapse=timelapse, buttons=buttons, convert_stub=stub, serial=fake_serial)
 
     os.chdir(saved_cwd)
     sys.path.remove(str(work))
@@ -99,6 +103,10 @@ def app(env):
     uploads = env.dir / 'uploads'
     for entry in uploads.iterdir():
         entry.unlink()
+    shutil.rmtree(env.dir / 'userdata', ignore_errors=True)
+    shutil.rmtree(env.dir / 'timelapse', ignore_errors=True)
+    env.timelapse._active.clear()
+    env.timelapse._rendering.clear()
     env.convert_stub.calls.clear()
     env.convert_stub.fail = False
     env.convert_stub.text_calls.clear()

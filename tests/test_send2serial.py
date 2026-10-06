@@ -177,3 +177,49 @@ def test_a_stop_that_came_first_is_not_undone(app, plot):
     assert result is True and app.globals.printing is False
     assert not any(w.startswith(b'PU0') for w in port.written)     # no plot data was sent
     assert 'end_of_print' in sio.names()
+
+
+# ---- a plotter that holds the line (XOFF, switched off, out of paper) ---------------------------
+
+def run_stalled(app, plot, flow, content=BIG_PLOT, name='stalled.hpgl', stop_after=0.3):
+    """Plot while the port reports a full output queue, and press Stop after `stop_after` seconds."""
+    import threading
+    (plot.uploads / name).write_bytes(content)
+    app.serial.Serial.backlog = 4000
+    result = []
+    thread = threading.Thread(daemon=True, target=lambda: result.append(
+        app.send2serial.sendToPlotter(SIO(), 'uploads/' + name, '/dev/x', 9600, flow)))
+    thread.start()
+    threading.Timer(stop_after, lambda: setattr(app.globals, 'printing', False)).start()
+    thread.join(5)
+    return thread, result
+
+
+@pytest.mark.parametrize('flow', ['XON/XOFF', 'None', 'CTS/RTS', 'HP-IB'])
+def test_stop_works_while_the_plotter_holds_the_line(app, uploads, flow):
+    plot = type('P', (), {'uploads': uploads})
+    thread, result = run_stalled(app, plot, flow)
+    port = app.serial.Serial.instances[0]
+
+    assert not thread.is_alive() and result == [True]       # the sender did not stay in a write
+    assert not any(w.startswith(b'PU0') for w in port.written)   # nothing was queued up on top of the backlog
+    assert port.closed and port.flushed >= 1                # the unsent output was dropped before closing
+    assert app.globals.printing is False
+
+
+def test_a_stalled_plot_carries_on_when_the_plotter_takes_data_again(app, uploads):
+    import threading
+    (uploads / 'slow.hpgl').write_bytes(SMALL_PLOT)
+    app.serial.Serial.backlog = 4000
+    threading.Timer(0.3, lambda: setattr(app.serial.Serial, 'backlog', 0)).start()
+    result = app.send2serial.sendToPlotter(SIO(), 'uploads/slow.hpgl', '/dev/x', 9600, 'XON/XOFF')
+    assert result is True
+    assert any(w.startswith(b'IN;SP1') or b'SP1' in w for w in app.serial.Serial.instances[0].written)
+
+
+def test_a_stopped_cal_plot_lifts_the_pen_on_a_clean_queue(app, uploads):
+    plot = type('P', (), {'uploads': uploads})
+    thread, result = run_stalled(app, plot, 'XON/XOFF', content=b'R2;H;F1;C100,100;K;' * 400, name='s.cal')
+    port = app.serial.Serial.instances[0]
+    assert not thread.is_alive() and result == [True]
+    assert port.written[-1] == b'H;' and port.flushed >= 1

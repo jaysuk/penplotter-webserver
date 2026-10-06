@@ -141,3 +141,122 @@ def test_a_backup_keeps_cal_files(client, uploads):
     import zipfile
     names = zipfile.ZipFile(io.BytesIO(client.get('/backup?uploads=1').data)).namelist()
     assert 'uploads/a.cal' in names
+
+
+# ---- CalComp flow control: ask the plotter how full its buffer is -------------------------------------
+
+POLL = b'\x11'
+
+
+class SimBuffer:
+    """A Model 84's 1024-byte input buffer. Plot data fills it; each status request lets it drain by `drain` bytes
+    (what the plotter draws between two requests), so it is slow enough to fill up. `hysteresis` makes "full" last
+    from 75 % until it is below 25 %; otherwise the answer follows the level. Data that arrives when the buffer is
+    full is lost: that is what makes a stray coordinate."""
+
+    def __init__(self, app, drain=120, hysteresis=False):
+        self.used, self.drain, self.hyst, self.full = 0, drain, hysteresis, False
+        self.max_used, self.dropped, self.got = 0, 0, bytearray()
+        app.serial.Serial.on_write = self.on_data
+        app.serial.Serial.status_answer = self.answer
+
+    def on_data(self, port, data):
+        for byte in data:
+            if self.used >= 1024:
+                self.dropped += 1
+                continue
+            self.used += 1
+            self.got.append(byte)
+        self.max_used = max(self.max_used, self.used)
+        if self.used >= 768:
+            self.full = True
+
+    def answer(self, port):
+        self.used = max(0, self.used - self.drain)
+        if self.used < 256:
+            self.full = False
+        full = self.full if self.hyst else self.used >= 256
+        return b'\x1a' if full else b'\x01'
+
+
+@pytest.mark.parametrize('hysteresis', [False, True])
+@pytest.mark.parametrize('drain', [30, 120, 600])
+def test_calcomp_flow_never_overflows_the_plotters_buffer(app, uploads, hysteresis, drain):
+    sim = SimBuffer(app, drain=drain, hysteresis=hysteresis)
+    result, sio = send(app, uploads, 'CalComp', CAL * 2)
+
+    assert result is True and sim.dropped == 0 and sim.max_used < 1024
+    assert bytes(sim.got) == CAL * 2                                # every byte, in order, none repeated
+    assert app.serial.Serial.polls > len(CAL * 2) // 256            # asked before every 256 bytes
+    assert ('print_progress', {'data': 100}) in sio.events
+
+
+def test_the_same_data_would_overflow_without_asking(app, uploads):
+    """The control case: with answers always "empty" (as with XON/XOFF, where nothing is asked) the buffer overflows."""
+    sim = SimBuffer(app, drain=30)
+    app.serial.Serial.status_answer = None                           # always "empty"
+    result, _ = send(app, uploads, 'XON/XOFF', CAL * 2)
+    assert result is True and sim.dropped > 0
+
+
+def test_calcomp_flow_opens_the_port_without_driver_handshaking_and_sends_no_hpgl(app, uploads):
+    send(app, uploads, 'CalComp')
+    port = app.serial.Serial.instances[0]
+    sent = b''.join(w for w in port.written if w != POLL)
+    assert sent == CAL and port.closed
+    assert not port.kwargs.get('xonxoff') and not port.kwargs.get('rtscts') and port.kwargs['timeout'] <= 0.2
+    assert b'IN;' not in sent and b'\033' not in sent
+
+
+def test_a_plotter_that_does_not_answer_is_reported_before_any_data_is_sent(app, uploads, monkeypatch):
+    monkeypatch.setattr(app.send2serial, 'CAL_ANSWER_S', 0.05)
+    app.serial.Serial.no_reply = True
+    result, sio = send(app, uploads, 'CalComp')
+    port = app.serial.Serial.instances[0]
+    assert result is False and port.written == [POLL] and port.closed
+    assert any(n == 'error' and 'did not answer' in d['data'] and 'XON/XOFF' in d['data'] for n, d in sio.events)
+    assert app.globals.printing is False
+
+
+def test_stop_while_the_plotter_says_full_lifts_the_pen(app, uploads):
+    Serial = app.serial.Serial
+
+    def full(port):
+        if Serial.polls >= 4:
+            app.globals.printing = False
+        return b'\x1a'
+
+    Serial.status_answer = full
+    result, _ = send(app, uploads, 'CalComp')
+    written = Serial.instances[0].written
+    assert result is True and written[-1] == b'H;' and Serial.polls == 4
+    assert not any(w not in (POLL, b'H;') for w in written)          # nothing of the file was sent
+
+
+def test_calcomp_flow_is_only_for_cal_files(app, client, uploads):
+    (uploads / 'a.hpgl').write_bytes(b'IN;SP1;PU0,0;PD100,100;SP0;')
+    result, sio = send(app, uploads, 'CalComp', b'IN;PU0,0;', name='h.hpgl')
+    assert result is False and app.serial.Serial.instances == []
+    assert any('for .cal files' in d['data'] for n, d in sio.events if n == 'error')
+    response = client.post('/start_plot', data=dict(PLOT, flowControl='CalComp'))
+    assert response.status_code == 400 and 'for .cal files' in response.get_data(as_text=True)
+    assert client.post('/queue/add', data=dict(PLOT, flowControl='CalComp')).status_code == 400
+
+
+def test_calcomp_flow_is_accepted_for_cal_plots_and_queued(app, client, uploads, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app.send2serial, 'sendToPlotter',
+                        lambda socketio, path, port, baud, flow, **kw: calls.append((path, flow)) or True)
+    (uploads / 'a.cal').write_bytes(CAL)
+    data = dict(CAL_PLOT, flowControl='CalComp')
+    assert client.post('/start_plot', data=data).data == b'Plot started'
+    assert wait_for(lambda: calls and not app.main.plot_lock.locked())
+    assert calls == [('uploads/a.cal', 'CalComp')]
+    assert client.post('/queue/add', data=data).status_code == 200
+    assert 'CalComp' in app.main.FLOW_CONTROLS
+
+
+def test_the_flow_control_lists_offer_calcomp():
+    import pathlib
+    html = (pathlib.Path(__file__).resolve().parent.parent / 'templates' / 'index.html').read_text(encoding='utf-8')
+    assert html.count('<option value="CalComp">') == 2               # the plot form and the settings dialog

@@ -1,0 +1,37 @@
+{
+  "app": "webplotter",
+  "type": "plotters",
+  "format": 1,
+  "plotters": [
+    {
+      "id": "hp7475a",
+      "name": "HP 7475A",
+      "notes": "9600 baud, 8 data bits, no parity, CTS/RTS flow control (the plotter's factory settings).",
+      "settings": {
+        "device": "hp7475a", "baudrate": "9600", "flowControl": "CTS/RTS", "pen_change": "auto",
+        "bytesize": "8", "parity": "N", "stopbits": "1", "xonxoff": "auto", "rtscts": "auto",
+        "dsrdtr": "auto", "dtr": "auto", "rts": "auto", "timeout": "", "open_delay": "0"
+      }
+    },
+    {
+      "id": "hp7440a",
+      "name": "HP 7440A",
+      "notes": "9600 baud, 8 data bits, no parity, CTS/RTS flow control.",
+      "settings": {
+        "device": "hp7440a", "baudrate": "9600", "flowControl": "CTS/RTS", "pen_change": "auto",
+        "bytesize": "8", "parity": "N", "stopbits": "1", "xonxoff": "auto", "rtscts": "auto",
+        "dsrdtr": "auto", "dtr": "auto", "rts": "auto", "timeout": "", "open_delay": "0"
+      }
+    },
+    {
+      "id": "hp7550",
+      "name": "HP 7550",
+      "notes": "9600 baud, 8 data bits, no parity, CTS/RTS flow control.",
+      "settings": {
+        "device": "hp7550", "baudrate": "9600", "flowControl": "CTS/RTS", "pen_change": "auto",
+        "bytesize": "8", "parity": "N", "stopbits": "1", "xonxoff": "auto", "rtscts": "auto",
+        "dsrdtr": "auto", "dtr": "auto", "rts": "auto", "timeout": "", "open_delay": "0"
+      }
+    }
+  ]
+}

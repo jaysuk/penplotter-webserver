@@ -25,13 +25,14 @@ Open:
 - [ ] Tasmota power off is a delay, not a check that the plotter is idle. I found no documented HP-GL
       query that reliably says "finished drawing", so this needs real hardware to improve on.
 - [ ] Stop (`ESC.K` + `PU;`) and pause have not been tried on a real plotter. They work against a simulated one on a real serial port (`tests/pi_serial_check.py`).
-- [ ] Timelapse: the settings exist in config.ini (and the UI) and there is a `/timelapse/<file>`
-      route, but nothing records anything. Implement it or remove it.
-- [ ] Page size filter per plotter (stub `updatePageSize` in main.js, not used). The convert dialog
-      also lacks the MP4200 device that the plot settings and config have.
-- [ ] Pi Plot shield buttons: the GPIO code in main.py is commented out and only logs a message.
-- [ ] The Telegram token is still sent back to the browser in clear text by `GET /save_configfile`
-      (the login password is not).
+- [x] Timelapse: pictures every few seconds while a plot runs (picture address, Pi camera or USB webcam), a video
+      made with ffmpeg, a list to play, download and delete them. Untested with a real camera and on a Pi Zero.
+- [x] Page size filter per plotter (`updatePageSize`, from the paper sizes of the chosen vpype device). The convert dialog
+      does not list the MP4200 on purpose: vpype 1.15 has no such device, so a conversion would fail. Add it as a
+      device of your own (vpype devices) with that id and it appears in every list.
+- [x] Pi Plot shield buttons (GPIO 27 start, GPIO 22 stop): each can resume or start the queue, stop, pause or do nothing.
+      Needs the shield to try (rising edge on a pulled down input, as the shield's example).
+- [x] The Telegram token is write-only, like the passwords (an empty field keeps it; a box removes it).
 - [x] Plot queue: several files in a row, with an optional paper change between them. Stop holds it. Untested on a real plotter, like the other plot control.
 - [x] Plot history: "Plot again" from a history row (a deleted file stays listed by name, without the button)
 - [x] Resume a stopped or failed plot from the history (carries on from the byte the plotter reached; untested on hardware)
@@ -40,4 +41,4 @@ Open:
 - [x] Storage: disk space, file sizes and ages, delete files older than N days, clear the cache
 - [x] Backup and restore (settings, history, presets, queue and optionally the uploaded files)
 - [x] GET /api/status for other programs
-- [ ] More plotter options?
+- [x] More plotter options: plotter profiles, the serial line options and vpype devices of your own cover them. New ideas go here as they come up.

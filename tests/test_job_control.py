@@ -29,7 +29,9 @@ def test_the_settings_of_a_plot_are_kept(app, client, uploads, slow_plot, monkey
     [job] = app.history.recent()
     assert job['options'] == {'file': 'a.hpgl', 'port': '/dev/ttyAMA0', 'baudrate': '9600',
                               'flowControl': 'CTS/RTS', 'tasmota': 'on', 'timelapse': '',
-                              'pens': '', 'pen_change': 'pause'}
+                              'pens': '', 'pen_change': 'pause',
+                              'bytesize': '8', 'parity': 'N', 'stopbits': '1', 'xonxoff': 'auto', 'rtscts': 'auto',
+                              'dsrdtr': 'auto', 'dtr': 'auto', 'rts': 'auto', 'timeout': '', 'open_delay': '0'}
     assert job['file_size'] == 3
     assert 'options' not in history_rows(client)[0]        # the page does not need them
 

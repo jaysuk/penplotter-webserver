@@ -44,7 +44,7 @@ function updateBaud() {
   jQuery
     .post(
       "/update_baud",
-      { selected_port: jQuery("#portList").val() },
+      Object.assign({ selected_port: jQuery("#portList").val() }, lineValues()),
       function (response) {
         console.log(response);
         if (response != "None") {
@@ -105,7 +105,8 @@ function updateStorage(files) {
       const s = response.data;
       const disk = s.total === null ? "" : formatBytes(s.free) + " free of " + formatBytes(s.total) + ". ";
       jQuery("#storageInfo").text(
-        disk + "Files " + formatBytes(s.uploads) + ", cache " + formatBytes(s.cache) + ", history " + formatBytes(s.history) + "."
+        disk + "Files " + formatBytes(s.uploads) + ", cache " + formatBytes(s.cache) + ", history " + formatBytes(s.history) +
+          ", timelapse " + formatBytes(s.timelapse) + "."
       );
       // Running low is worth a warning colour
       jQuery("#storageInfo").toggleClass("uk-text-danger", s.total !== null && s.free < 200 * 1024 * 1024);
@@ -517,16 +518,24 @@ function followPlot(text) {
 }
 
 // Update page size options
-function updatePageSize(element) {
-  // TODO add pagesize filter for the machines
-  ////////////////////////////////////////////////
-  ////////////////////////////////////////////////
+// Paper sizes a device of your own does not have cannot be chosen (the ones that come with vpype are not checked here)
+function updatePageSize() {
+  const device = vpypeDevices[jQuery("#convertData [name='device']").val()];
+  const size = jQuery("#convertData [name='outputsize']");
+  size.find("option").each(function () {
+    jQuery(this).prop("disabled", !!device && device.papers.indexOf(this.value) < 0);
+  });
+  if (size.find("option:selected").prop("disabled")) {
+    const first = size.find("option:not(:disabled)").first();
+    if (first.length) size.val(first.val());
+  }
 }
 
 // Handle file conversion
 function convertFileModal(element) {
   const filename = jQuery(element).attr("data-filename");
   jQuery("#convertFile").val(filename);
+  updatePageSize();
   updatePresets();
   updatePlugins();
   UIkit.modal("#modal-convertFile").show();
@@ -606,6 +615,322 @@ function createText() {
       notify(errorMessage(error), "danger");
       console.error(error);
     });
+}
+
+// Plotters: named sets of the settings in Plotter settings (device, baud rate, flow control, pen
+// changes and the serial line). The port is not part of one: it belongs to this computer.
+const LINE_FIELDS = ["bytesize", "parity", "stopbits", "xonxoff", "rtscts", "dsrdtr", "dtr", "rts", "timeout", "open_delay"];
+const LINE_DEFAULTS = { bytesize: "8", parity: "N", stopbits: "1", xonxoff: "auto", rtscts: "auto", dsrdtr: "auto", dtr: "auto", rts: "auto", timeout: "", open_delay: "0" };
+var plotterProfiles = {};
+
+// The serial line settings as they are in the form
+function lineValues() {
+  const values = {};
+  for (const key of LINE_FIELDS) values[key] = jQuery("#plotterData [name='" + key + "']").val() || "";
+  return values;
+}
+
+// Choose an option, adding it when the list does not have it (a baud rate from a shared plotter)
+function setSelect(select, value) {
+  select = jQuery(select);
+  if (value && !select.find("option").filter(function () { return this.value == value; }).length) {
+    jQuery("<option/>", { value: value, text: value }).appendTo(select);
+  }
+  select.val(value);
+}
+
+function updatePlotterProfiles(selected) {
+  return axios
+    .get("/plotters")
+    .then(function (response) {
+      const panel = jQuery("#plotterProfile");
+      const previous = selected !== undefined ? selected : panel.val();
+      plotterProfiles = {};
+      const lists = [
+        [panel, "Custom settings"],
+        [jQuery("#plotter_profile"), "None"],
+      ];
+      for (const [list, first] of lists) {
+        const kept = list.is(panel) ? previous : list.val();
+        list.empty();
+        jQuery("<option/>", { value: "", text: first }).appendTo(list);
+        const groups = {
+          builtin: jQuery("<optgroup/>", { label: "Built in" }),
+          custom: jQuery("<optgroup/>", { label: "My plotters" }),
+        };
+        for (const profile of response.data) {
+          plotterProfiles[profile.id] = profile;
+          jQuery("<option/>", { value: profile.id, text: profile.name }).appendTo(groups[profile.source]);
+        }
+        for (const source of ["builtin", "custom"]) {
+          if (groups[source].children().length) groups[source].appendTo(list);
+        }
+        list.val(plotterProfiles[kept] ? kept : "");
+      }
+      showPlotterNotes(panel.val());
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function showPlotterNotes(id) {
+  const profile = plotterProfiles[id];
+  const notes = jQuery("#plotterNotes");
+  if (profile && profile.notes) notes.text(profile.notes).prop("hidden", false);
+  else notes.text("").prop("hidden", true);
+}
+
+function applyPlotterProfile(id) {
+  showPlotterNotes(id);
+  const profile = plotterProfiles[id];
+  if (!profile) return;
+  const s = profile.settings;
+  jQuery("#device").val(s.device).change();
+  jQuery("#convertData [name='device']").val(s.device);
+  setSelect("#baudRate", s.baudrate);
+  jQuery("#flowControl").val(s.flowControl).change();
+  jQuery("#penChange").val(s.pen_change);
+  let changed = false;
+  for (const key of LINE_FIELDS) {
+    jQuery("#plotterData [name='" + key + "']").val(s[key]);
+    if (s[key] !== LINE_DEFAULTS[key]) changed = true;
+  }
+  // Show the serial line when the plotter does something unusual with it
+  if (changed) jQuery("#serialLine").prop("open", true);
+}
+
+function savePlotter() {
+  const chosen = plotterProfiles[jQuery("#plotterProfile").val()];
+  UIkit.modal.prompt("Name for this plotter:", chosen ? chosen.name : "").then(function (name) {
+    name = (name || "").trim();
+    if (!name) return;
+    let body = jQuery("#plotterData").serialize() + "&name=" + encodeURIComponent(name);
+    if (chosen && chosen.name === name) body += "&notes=" + encodeURIComponent(chosen.notes || "");
+    axios
+      .post("/plotters", body)
+      .then(function (response) {
+        notify(response.data, "success");
+        return axios.get("/plotters");
+      })
+      .then(function (response) {
+        const saved = response.data.find(function (profile) { return profile.name === name; });
+        return updatePlotterProfiles(saved ? saved.id : "");
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+        console.error(error);
+      });
+  });
+}
+
+function deletePlotter() {
+  const profile = plotterProfiles[jQuery("#plotterProfile").val()];
+  if (!profile || profile.source !== "custom") {
+    notify("Choose one of your own plotters to delete", "warning");
+    return;
+  }
+  UIkit.modal.confirm("Delete the plotter " + profile.name + "?").then(function () {
+    axios
+      .post("/plotters/delete", new URLSearchParams({ id: profile.id }).toString())
+      .then(function (response) {
+        notify(response.data, "warning");
+        return updatePlotterProfiles("");
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+        console.error(error);
+      });
+  }, function () {});
+}
+
+function importPlotters() {
+  const file = jQuery("#importPlottersFile")[0].files[0];
+  if (!file) {
+    notify("Choose a plotter file first", "danger");
+    return;
+  }
+  const form = new FormData();
+  form.append("plotters", file);
+  axios
+    .post("/plotters/import", form)
+    .then(function (response) {
+      notify("Imported " + response.data.imported + " plotters: " + response.data.names.join(", "), "success");
+      jQuery("#importPlottersFile").val("");
+      return updatePlotterProfiles();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
+// vpype devices of your own: plotters vpype does not know. A device is text in vpype's own format (TOML); the
+// server checks it, keeps it in userdata/ and registers it with vpype before each conversion.
+var vpypeDevices = {};
+var vpypeBuiltin = [];
+var editingDevice = null;
+
+// The device lists on the page: the devices of your own go in a group of their own
+function updateVpypeDevices() {
+  return axios
+    .get("/vpype_devices")
+    .then(function (response) {
+      vpypeDevices = {};
+      for (const device of response.data.devices) vpypeDevices[device.id] = device;
+      vpypeBuiltin = response.data.builtin;
+      const lists = [jQuery("#device"), jQuery("#convertData [name='device']"), jQuery("#plotter_device")];
+      for (const list of lists) {
+        const kept = list.val();
+        list.find("optgroup.my-devices").remove();
+        const mine = Object.values(vpypeDevices);
+        if (mine.length) {
+          const group = jQuery("<optgroup/>", { label: "My devices", class: "my-devices" });
+          for (const device of mine) {
+            // A device of your own with the name of one the page lists (vpype may not have it) takes its place
+            list.children("option[value='" + device.id + "']").remove();
+            jQuery("<option/>", { value: device.id, text: device.name }).appendTo(group);
+          }
+          group.appendTo(list);
+        }
+        if (kept && list.find("option").filter(function () { return this.value === kept; }).length) list.val(kept);
+      }
+      showDeviceList();
+      updatePageSize();
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function showDeviceList() {
+  const list = jQuery("#deviceList").empty();
+  const devices = Object.values(vpypeDevices);
+  if (!devices.length) {
+    jQuery("<li/>", { class: "cs-note", text: "None yet. Add one below." }).appendTo(list);
+  }
+  for (const device of devices) {
+    const row = jQuery("<li/>").append(
+      jQuery("<div/>", { class: "device-row" })
+        .append(jQuery("<span/>", { class: "device-name", text: device.name }))
+        .append(jQuery("<span/>", { class: "device-meta", text: device.pens + (device.pens === 1 ? " pen" : " pens") + ", " + device.papers.join(", ") }))
+        .append(jQuery("<a/>", { href: "#", class: "editDevice uk-text-small", "data-id": device.id, text: "Edit" }))
+        .append(jQuery("<a/>", { href: "#", class: "deleteDevice uk-text-small", "data-id": device.id, text: "Delete" }))
+    );
+    row.appendTo(list);
+  }
+  const base = jQuery("#deviceBase");
+  base.find("option:not(:first)").remove();
+  for (const id of vpypeBuiltin) jQuery("<option/>", { value: id, text: id }).appendTo(base);
+}
+
+function deviceError(message) {
+  jQuery("#deviceError").text(message || "").prop("hidden", !message);
+}
+
+function startDeviceEditor(id, text) {
+  editingDevice = id;
+  jQuery("#deviceEditorTitle").text(id ? "Change " + vpypeDevices[id].name : "Add a device");
+  jQuery("#deviceText").val(text);
+  jQuery("#deviceBase").val("");
+  deviceError("");
+}
+
+function openDeviceManager() {
+  updateVpypeDevices().then(function () {
+    startDeviceEditor(null, "");
+    UIkit.modal("#modal-vpypeDevices").show();
+  });
+}
+
+function editDevice(id) {
+  if (!vpypeDevices[id]) return;
+  startDeviceEditor(id, vpypeDevices[id].text);
+  jQuery("#deviceText").trigger("focus");
+}
+
+function generateDevice() {
+  deviceError("");
+  axios
+    .post("/vpype_devices/generate", jQuery("#deviceQuickForm").serialize())
+    .then(function (response) {
+      jQuery("#deviceText").val(response.data.text);
+    })
+    .catch(function (error) {
+      deviceError(errorMessage(error));
+    });
+}
+
+function deviceFromVpype(id) {
+  if (!id) return;
+  deviceError("");
+  axios
+    .get("/vpype_devices/template", { params: { base: id } })
+    .then(function (response) {
+      editingDevice = null;
+      jQuery("#deviceEditorTitle").text("Add a device");
+      jQuery("#deviceText").val(response.data.text);
+    })
+    .catch(function (error) {
+      deviceError(errorMessage(error));
+    });
+}
+
+function saveDevice() {
+  deviceError("");
+  const body = new URLSearchParams({ text: jQuery("#deviceText").val() });
+  if (editingDevice) body.set("replace", editingDevice);
+  axios
+    .post("/vpype_devices", body.toString())
+    .then(function (response) {
+      notify("Saved " + response.data.saved.join(", "), "success");
+      return updateVpypeDevices().then(function () {
+        startDeviceEditor(null, "");
+      });
+    })
+    .catch(function (error) {
+      deviceError(errorMessage(error));
+    });
+}
+
+function deleteDevice(id) {
+  const device = vpypeDevices[id];
+  if (!device) return;
+  UIkit.modal.confirm("Delete the device " + device.name + "? Plotters that use it cannot convert until it is added again.").then(function () {
+    axios
+      .post("/vpype_devices/delete", new URLSearchParams({ id: id }).toString())
+      .then(function (response) {
+        notify(response.data, "warning");
+        if (editingDevice === id) startDeviceEditor(null, "");
+        return updateVpypeDevices();
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+      });
+  }, function () {});
+}
+
+function loadDeviceFile() {
+  const file = jQuery("#deviceFile")[0].files[0];
+  if (!file) {
+    deviceError("Choose a file first");
+    return;
+  }
+  if (file.size > 128 * 1024) {
+    deviceError("That file is too large to be a device");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    editingDevice = null;
+    jQuery("#deviceEditorTitle").text("Add a device");
+    jQuery("#deviceText").val(reader.result);
+    jQuery("#deviceFile").val("");
+    deviceError("");
+  };
+  reader.onerror = function () {
+    deviceError("That file could not be read");
+  };
+  reader.readAsText(file);
 }
 
 // Conversion presets: named sets of the options in the convert dialog
@@ -885,6 +1210,8 @@ function applyPlotState(state) {
     hideWaitNotice();
   }
   setEta(state.running ? state.eta : null);
+  if (state.running && state.timelapse) showTimelapseFrame(state.timelapse);
+  else hideTimelapseFrame();
   if (!state.running && watchingPlot) stopWatching();
 
   if (state.running && state.file) {
@@ -1104,6 +1431,8 @@ function plotterAction(action, extra) {
     baudrate: jQuery("#baudRate").val(),
     flowControl: jQuery("#flowControl").val(),
   });
+  const line = lineValues();
+  for (const key in line) form.append(key, line[key]);
   for (const key in extra || {}) form.append(key, extra[key]);
 
   return axios
@@ -1289,6 +1618,155 @@ function actionPoweroff() {
     });
 }
 
+// Timelapse: pictures of the plot, and the video made from them
+var timelapseSettings = { enabled: false, preview: false };
+const BUTTON_FIELDS = ["buttons_enable", "button_start_action", "button_stop_action"];
+const TIMELAPSE_FIELDS = [
+  "timelapse_enable",
+  "timelapse_auto_start",
+  "timelapse_preview",
+  "timelapse_source",
+  "timelapse_url",
+  "timelapse_interval",
+  "timelapse_fps",
+  "timelapse_tail",
+  "timelapse_keep_frames",
+];
+const TIMELAPSE_STATES = {
+  recording: "Recording",
+  rendering: "Making the video",
+  video: "Video",
+  frames: "Pictures only",
+  interrupted: "Interrupted, pictures only",
+};
+
+// The "record this plot" box is offered when timelapse is on, and starts ticked when every plot is recorded
+function applyTimelapseSettings(data) {
+  timelapseSettings.enabled = String(data.timelapse_enable).toLowerCase() == "true";
+  timelapseSettings.preview = String(data.timelapse_preview).toLowerCase() == "true";
+  jQuery("#timelapse_control").toggleClass("uk-hidden", !timelapseSettings.enabled);
+  jQuery("#timelapse").prop("checked", String(data.timelapse_auto_start).toLowerCase() == "true");
+}
+
+function showTimelapseFrame(id) {
+  if (!timelapseSettings.preview || !id) return;
+  jQuery("#timelapseLive").attr("src", "/timelapse/" + encodeURIComponent(id) + "/latest.jpg?t=" + Date.now());
+  jQuery("#timelapseLiveBox").removeClass("uk-hidden");
+}
+
+function hideTimelapseFrame() {
+  jQuery("#timelapseLiveBox").addClass("uk-hidden");
+  jQuery("#timelapseLive").removeAttr("src");
+}
+
+function timelapseRow(item) {
+  const id = escapeHtml(item.id);
+  const url = "/timelapse/" + encodeURIComponent(item.id) + "/";
+  const when = item.started ? new Date(item.started * 1000).toLocaleString() : item.id.slice(0, 15);
+  const details = [when, item.frames + (item.frames == 1 ? " picture" : " pictures"), formatBytes(item.size)];
+  const idle = item.state != "recording" && item.state != "rendering";
+  let actions = "";
+  if (item.video) {
+    actions += '<a href="#" class="uk-icon-link timelapsePlay" data-id="' + id + '" title="Play" data-uk-tooltip data-uk-icon="icon: play-circle"></a> ';
+    actions += '<a href="' + url + 'timelapse.mp4?download=1" class="uk-icon-link" title="Download the video" data-uk-tooltip data-uk-icon="icon: download"></a> ';
+  }
+  if (item.zip) {
+    actions += '<a href="' + url + 'frames.zip" class="uk-icon-link" title="Download the pictures (zip)" data-uk-tooltip data-uk-icon="icon: camera"></a> ';
+    if (item.frames >= 2 && idle) {
+      actions += '<a href="#" class="uk-icon-link timelapseRender" data-id="' + id + '" title="Make the video" data-uk-tooltip data-uk-icon="icon: refresh"></a> ';
+    }
+  }
+  if (idle) {
+    actions += '<a href="#" class="uk-icon-link timelapseDelete" data-id="' + id + '" title="Delete" data-uk-tooltip data-uk-icon="icon: trash"></a>';
+  }
+  const picture = item.poster
+    ? '<img src="' + url + 'latest.jpg" alt="" loading="lazy" height="40" style="height: 40px; width: 70px; object-fit: cover; margin-right: 10px">'
+    : "";
+  return (
+    '<li class="uk-flex uk-flex-middle">' + picture +
+    '<div class="uk-width-expand"><div>' + escapeHtml(item.file || item.id) + "</div>" +
+    '<div class="uk-text-small uk-text-muted">' + escapeHtml(details.join(", ")) + ". " + escapeHtml(TIMELAPSE_STATES[item.state] || item.state) + "</div></div>" +
+    '<div class="uk-flex-none">' + actions + "</div></li>"
+  );
+}
+
+function updateTimelapses() {
+  return axios
+    .get("/timelapses")
+    .then(function (response) {
+      const data = response.data;
+      jQuery("#timelapseList").html(data.items.map(timelapseRow).join(""));
+      jQuery("#timelapseEmpty").toggleClass("uk-hidden", data.items.length > 0);
+      const notes = [];
+      if (!data.enabled) notes.push("Timelapse is switched off in the settings.");
+      else if (data.problem) notes.push(data.problem + ".");
+      if (!data.ffmpeg) notes.push("ffmpeg is not installed (sudo apt install ffmpeg), so only the pictures are kept.");
+      notes.push("Using " + formatBytes(data.usage) + ".");
+      jQuery("#timelapseNote").text(notes.join(" "));
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
+function openTimelapses() {
+  jQuery("#timelapsePlayer").addClass("uk-hidden").removeAttr("src");
+  updateTimelapses().then(function () {
+    UIkit.modal("#modal-timelapse").show();
+  });
+}
+
+function playTimelapse(id) {
+  const player = jQuery("#timelapsePlayer");
+  player.attr("src", "/timelapse/" + encodeURIComponent(id) + "/timelapse.mp4").removeClass("uk-hidden");
+  const started = player[0].play();
+  if (started) started.catch(function () {});
+}
+
+function renderTimelapse(id) {
+  axios
+    .post("/timelapse/render", new URLSearchParams({ id: id }).toString())
+    .then(function (response) {
+      notify(response.data, "success");
+      updateTimelapses();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
+function deleteTimelapse(id) {
+  UIkit.modal.confirm("Delete this timelapse?").then(function () {
+    axios
+      .post("/timelapse/delete", new URLSearchParams({ id: id }).toString())
+      .then(function () {
+        updateTimelapses();
+        updateStorage();
+      })
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+      });
+  }, function () {});
+}
+
+function testTimelapse() {
+  axios
+    .post("/timelapse/test", "", { responseType: "blob" })
+    .then(function (response) {
+      jQuery("#timelapseTest").attr("src", URL.createObjectURL(response.data)).removeClass("uk-hidden");
+    })
+    .catch(function (error) {
+      const data = error.response && error.response.data;
+      if (data instanceof Blob) {
+        data.text().then(function (text) {
+          notify(text || errorMessage(error), "danger");
+        });
+      } else {
+        notify(errorMessage(error), "danger");
+      }
+    });
+}
+
 function actionTasmota() {
   axios
     .post("/action_tasmota")
@@ -1306,12 +1784,14 @@ function actionTasmota() {
 
 // Fetch config.ini data and update UI
 function updateConfiguration() {
-  return axios
-    .get("/save_configfile")
+  return updateVpypeDevices()
+    .then(updatePlotterProfiles)
+    .then(function () {
+      return axios.get("/save_configfile");
+    })
     .then(function (response) {
       // handle success
       if (response.status == 200) {
-        jQuery("#telegram_token").val(response.data.telegram_token);
         jQuery("#telegram_chatid").val(response.data.telegram_chatid);
         jQuery("#tasmota_enable").val(response.data.tasmota_enable);
         jQuery("#tasmota_ip").val(response.data.tasmota_ip);
@@ -1323,7 +1803,14 @@ function updateConfiguration() {
         if (response.data.plotter_pen_change) {
           jQuery("#penChange").val(response.data.plotter_pen_change);
         }
+        // The default plotter fills in its own settings on top of those
+        const profile = response.data.plotter_profile;
+        if (profile && plotterProfiles[profile]) {
+          jQuery("#plotterProfile").val(profile);
+          applyPlotterProfile(profile);
+        }
 
+        applyTimelapseSettings(response.data);
         if (String(response.data.tasmota_enable).toLowerCase() == "true") {
           jQuery("#tasmota_control").removeClass("uk-hidden");
         } else {
@@ -1357,7 +1844,7 @@ function restoreBackup() {
       .post("/restore", form)
       .then(function (response) {
         const r = response.data;
-        notify("Restored " + r.config + " settings" + (r.history ? ", the history" : "") + ", " + r.uploads + " files", "success");
+        notify("Restored " + r.config + " settings" + (r.history ? ", the history" : "") + ", " + r.plotters + " plotters, " + r.uploads + " files", "success");
         jQuery("#restoreFile").val("");
         updateFiles();
         updateHistory();
@@ -1389,15 +1876,19 @@ function actionOpenConfig() {
     .then(function (response) {
       // handle success
       if (response.status == 200) {
-        jQuery("#telegram_token").val(response.data.telegram_token);
         jQuery("#telegram_chatid").val(response.data.telegram_chatid);
+        // The token is never sent to the browser; leaving the field empty keeps it
+        jQuery("#telegram_token")
+          .val("")
+          .attr("placeholder", response.data.telegram_token_set ? "Leave empty to keep the current token" : "");
+        jQuery("#telegram_token_remove").prop("checked", false);
         jQuery("#tasmota_enable").val(response.data.tasmota_enable);
         jQuery("#tasmota_ip").val(response.data.tasmota_ip);
         jQuery("#tasmota_on_delay").val(response.data.tasmota_on_delay);
         jQuery("#tasmota_off_delay").val(response.data.tasmota_off_delay);
-        jQuery("#timelapse_enable").val(response.data.timelapse_enable);
-        jQuery("#timelapse_auto_start").val(response.data.timelapse_auto_start);
-        jQuery("#timelapse_preview").val(response.data.timelapse_preview);
+        for (const field of TIMELAPSE_FIELDS.concat(BUTTON_FIELDS)) {
+          jQuery("#" + field).val(response.data[field]);
+        }
         for (const field of NOTIFICATION_FIELDS) {
           jQuery("#" + field).val(response.data[field]);
         }
@@ -1419,6 +1910,7 @@ function actionOpenConfig() {
           .val(response.data.plotter_flowControl)
           .change();
         jQuery("#plotter_pen_change").val(response.data.plotter_pen_change || "auto");
+        jQuery("#plotter_profile").val(plotterProfiles[response.data.plotter_profile] ? response.data.plotter_profile : "");
 
         UIkit.modal("#modal-configFile").show();
       }
@@ -1431,13 +1923,9 @@ function actionOpenConfig() {
 
 // Save new values in config.ini
 function saveConfig() {
-  const configData = jQuery("#configData").serializeArray();
-  console.log("configData", configData);
-
   axios
     .post("/save_configfile", jQuery("#configData").serialize())
     .then(function (response) {
-      console.log(response);
       // handle success
       if (response.status == 200) {
         notify(response.data, "success");

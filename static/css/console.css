@@ -247,6 +247,12 @@ body.console {
 .cs-scroll { overflow: auto; max-height: 360px; }
 .cs-note { font-size: 13px; color: var(--muted); }
 
+/* the serial line options in Plotter settings */
+.cs-line { border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; }
+.cs-line > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.cs-line[open] > summary { color: var(--fg); }
+.cs-line .uk-form-label { font-size: 12px; color: var(--muted); }
+
 /* icon links in headers and rows */
 .console .uk-icon-link, .console .uk-icon-button {
   color: var(--muted);
@@ -529,3 +535,9 @@ body.console {
 .plugin-cmd.is-disabled { color: var(--muted); text-decoration: line-through; }
 .plugin-params { margin: 2px 0 4px; padding-left: 18px; color: var(--muted); font-size: 0.9em; }
 .plugin-list code { font-family: var(--mono); overflow-wrap: anywhere; }
+
+/* vpype devices of your own */
+.console .uk-textarea.cs-mono { font: 12px/1.45 var(--mono); white-space: pre; overflow: auto; }
+.device-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.device-row .device-name { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.device-row .device-meta { color: var(--muted); font-size: 12px; }

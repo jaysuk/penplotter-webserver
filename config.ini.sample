@@ -29,6 +29,17 @@ mqtt_password =
 timelapse_enable = false
 timelapse_auto_start = true
 timelapse_preview = false
+timelapse_source = url
+timelapse_url =
+timelapse_interval = 10
+timelapse_fps = 25
+timelapse_tail = 10
+timelapse_keep_frames = false
+
+[buttons]
+buttons_enable = false
+button_start_action = start
+button_stop_action = stop
 
 [plotter]
 name = My Plotter
