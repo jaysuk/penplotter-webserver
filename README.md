@@ -19,7 +19,7 @@ This is the `PiPlot` branch of a fork. It is built for the [Pi Plot shield](http
 - Preview any HPGL or CAL file in the browser: zoom, pan, colours per pen, pen-up travel, a position read-out in mm and a replay.
 
 **Plotting**
-- Several flow control schemes: CTS/RTS, software (the plotter reports its free buffer), XON/XOFF, none, HP-IB through Plug n Plot, and a CalComp scheme that asks the plotter before every 256 bytes. A buffer chart is drawn for the schemes that report the buffer.
+- Several flow control schemes: CTS/RTS, software (the plotter reports its free buffer), XON/XOFF, none, and a CalComp scheme that asks the plotter before every 256 bytes. A buffer chart is drawn for the schemes that report the buffer.
 - Start, pause, resume and stop a plot. A refreshed page or a second device picks up a running plot with its progress and log.
 - Time left (an estimate that learns from your earlier plots), and *Watch the plot*: a cursor on the preview follows the bytes sent.
 - Multi-pen files: choose which pens to plot, and either pause at every pen change so you can swap the pen, or leave it to the plotter's carousel.
@@ -30,7 +30,8 @@ This is the `PiPlot` branch of a fork. It is built for the [Pi Plot shield](http
 - Auto baud rate detection.
 
 **Around the plot**
-- Notifications to Telegram, a webhook or MQTT: start, finish, errors, pen or paper changes, and progress every N percent.
+- Notifications to Telegram, a webhook or MQTT: start, finish, errors, pen or paper changes, progress every N percent, and a new version of the web plotter.
+- A notice when a newer version is out, an Update button that installs it from the page, and a changelog that is shown after an update.
 - Switch the plotter off after a plot with a Tasmota-enabled Sonoff.
 - Timelapse of a plot from a webcam address, a Pi camera or a USB webcam, turned into a video with ffmpeg.
 - The Pi Plot shield's two buttons (start and stop).
@@ -49,7 +50,6 @@ Any other HPGL plotter can be added as a *vpype device* of your own. Plotters th
 | **Software flow ctrl.** | HPGL plotters without a working CTS line: the plotter is asked for its free buffer space | yes |
 | **XON/XOFF** | Handshaking done by the serial driver | no |
 | **None** | No handshaking | no |
-| **HP-IB** | HP-IB plotters through Plug n Plot (fixed 9600 baud, one byte at a time) | no |
 | **CalComp (ask plotter)** | CalComp `.cal` files only: before every 256 bytes the Model 84's Ctrl-Q status request is sent, answered Ctrl-A for "empty" and Ctrl-Z for "full". Use it if XON/XOFF gives stray lines that run off the page (the OFFSCALE light). | no |
 
 `.cal` files are sent byte for byte, with none of the HPGL set-up or queries, so they only allow XON/XOFF, None and CalComp. There is no time left, pen choice or resume for them.
@@ -64,9 +64,11 @@ curl -sSL https://raw.githubusercontent.com/jaysuk/penplotter-webserver/PiPlot/i
 
 It installs the web server into `~/webplotter` with its Python environment in `~/penplotter_venv`, sets it up as the `webplotter` service and reboots the Pi. It also installs `ffmpeg` (for timelapse videos) and `poppler-utils` (for PDF import); if either cannot be installed the rest still works. It can take 10 to 20 minutes on a Pi Zero, and the full output goes to `~/webplotter-install.log`.
 
-Running it again updates an existing install and keeps your uploaded files, *config.ini*, the plot history and queue (*history.db*) and *userdata/* (your plotters and vpype devices).
+Running it again updates an existing install and keeps your uploaded files, *config.ini*, the plot history and queue (*history.db*) and *userdata/* (your plotters and vpype devices). You can also update from the page (see *Updates*).
 
-Environment variables for the script: `WEBPLOTTER_REPO` and `WEBPLOTTER_BRANCH` install from another repository or branch, `WEBPLOTTER_NO_REBOOT=1` skips the reboot.
+The page's *Update*, *Reboot Pi* and *Power off* buttons run `sudo` without a terminal, so the user running the web plotter needs to use `sudo` without a password. The default `pi` user of Raspberry Pi OS can. If you installed as another user, the installer notices and asks whether to allow it (it writes a rule to */etc/sudoers.d/*, checked with `visudo` first). If you say no, those three buttons will not work.
+
+Environment variables for the script: `WEBPLOTTER_REPO` and `WEBPLOTTER_BRANCH` install from another repository or branch, `WEBPLOTTER_NO_REBOOT=1` skips the reboot, `WEBPLOTTER_SUDO_NOPASSWD=yes` or `no` answers the sudo question without asking it.
 
 To run it from a checkout instead (any computer with Python 3.9 or newer):
 
@@ -111,7 +113,7 @@ Pause, resume and stop are always in the bar. Stop holds the queue: the file tha
 
 *Add to queue* keeps the current form with a file, and *Start queue* plots them one after the other. Tick *Paper change after* to wait for you to load new paper and press Resume. While the queue runs, a plot started by hand is refused.
 
-*Plot history* is kept in *history.db* next to *config.ini*, with how each plot ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). *Plot again* starts a plot with the same file and settings. A stopped or failed plot also has *Resume*, which continues it from the position the plotter had reached; without buffer feedback (XON/XOFF, none, HP-IB) the position is not known exactly, so you choose how far to go back.
+*Plot history* is kept in *history.db* next to *config.ini*, with how each plot ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). *Plot again* starts a plot with the same file and settings. A stopped or failed plot also has *Resume*, which continues it from the position the plotter had reached; without buffer feedback (XON/XOFF, none) the position is not known exactly, so you choose how far to go back.
 
 ### Plotters
 
@@ -138,6 +140,7 @@ The settings icon (top right) edits everything in *config.ini* without a restart
 - Telegram token and chat ID, a webhook URL and an MQTT broker, and which events to send (and a *test* button).
 - Tasmota device IP, and how long to wait after switching the plotter on and before switching it off.
 - Timelapse, and the Pi Plot shield buttons.
+- Whether to look for new versions (on by default) and to send a message about one (on by default).
 - Export and import of your plotters, and backup and restore.
 - A login (see *Security*).
 
@@ -151,13 +154,25 @@ Switch them on in the settings (the installer installs `gpiozero`; a Raspberry P
 
 Switch it on in the settings, choose the camera and tick *Record a timelapse of this plot* before starting (or set *Record each plot unless unticked*). A picture is taken every few seconds while the plot runs (not while it is held for a pen or paper change) and for a few seconds after the last byte is sent, then `ffmpeg` makes a video in the background; the pictures are removed afterwards unless you keep them. The camera is a picture address (a webcam server's snapshot link, such as `http://localhost:8080/?action=snapshot`, which must answer with one JPEG), a Raspberry Pi camera (`rpicam-still`, or `libcamera-still` on older systems) or a USB webcam (`fswebcam`). *Take a test picture* shows what the camera sees. *Timelapses* in the System panel plays, downloads (video or a zip of the pictures), makes again and deletes them. They are kept in *timelapse/*, which an update leaves alone (they are not part of the backup). Without `ffmpeg` only the pictures are kept. Making a video is slow on a Pi Zero and runs at low priority.
 
+### Updates
+
+The server looks at the `VERSION` file of the GitHub branch it was installed from about once a day. When that is newer than its own, an *Update available* chip appears in the header, and one message goes to Telegram, the webhook and MQTT (the `update` event; topic `webplotter/update`). Both can be switched off in the settings (*Look for new versions on GitHub*, *A new version of the web plotter is available*). The check is one anonymous request to `raw.githubusercontent.com`.
+
+The dialog lists what the new version changes. Press the chip, or *Version* in the System panel, then *Update*. The page runs the installer's update path for you: it downloads the new version, keeps your files, settings, plotters and history, updates the Python packages and restarts the web plotter, then reloads itself. That can take 10 to 20 minutes on a Pi Zero, and nothing can be plotted meanwhile. It is refused while a plot or the queue is running. If it fails, the old version is still in place and the page shows the end of the log (*~/webplotter-update.log*).
+
+Anyone who can open the page can start an update, as they can reboot the Pi, so use the login (see *Security*) on a network you do not trust. The update always comes from the repository and branch the install was cloned from, and only works for the install the installer made (*~/webplotter*) and when passwordless `sudo` is available (see *Installation*). Otherwise run the installer again over SSH.
+
+After an update, the next time you open the page in a browser it shows what changed since that browser last looked (*What's new*). *Changelog* in the update dialog shows the latest entries again. The notes come from *CHANGELOG.md*.
+
+New versions are announced when `VERSION` is changed on the branch, so a release needs a new entry in *CHANGELOG.md* and a higher `VERSION`, committed together.
+
 ### Backup and restore
 
 *Download backup* in the settings dialog downloads a zip with *config.ini*, the history, presets and queue, your plotters and vpype devices, and optionally the uploaded files. *Restore* takes such a zip (it is checked before anything is applied, and refused while a plot runs). The zip contains the passwords from *config.ini*, so keep it safe.
 
 ### Status API
 
-`GET /api/status` returns the plotter, its state (`idle`, `plotting`, `paused`, `pen_change`, `paper_change`, `disconnected`, `reconnect`), the plot (file, progress, time left), the queue and the last plot, as JSON for other programs (behind the login, if there is one).
+`GET /api/status` returns the plotter, the version of the web plotter (and whether a newer one is out), its state (`idle`, `plotting`, `paused`, `pen_change`, `paper_change`, `disconnected`, `reconnect`), the plot (file, progress, time left), the queue and the last plot, as JSON for other programs (behind the login, if there is one).
 
 ## Security
 

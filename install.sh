@@ -146,6 +146,59 @@ ensure_sudo()
     [ "$ISTTY" -eq 1 ] && printf '\033[?25l'
 }
 
+# The web plotter calls sudo without a terminal (Update, Reboot and Power off on its page), so the user it
+# runs as must be able to use sudo without a password. Raspberry Pi OS gives that to its default user
+# ("pi"); any other user usually needs a sudoers rule. Must run BEFORE ensure_sudo: "-k" ignores the
+# password that was just typed, or is still remembered from earlier.
+PASSWORDLESS_SUDO=1
+check_passwordless_sudo()
+{
+    sudo -n -k true 2>/dev/null || PASSWORDLESS_SUDO=0
+}
+
+# WEBPLOTTER_SUDO_NOPASSWD=yes or no answers the question without asking it
+offer_passwordless_sudo()
+{
+    [ "$PASSWORDLESS_SUDO" -eq 1 ] && return
+    [ "$(id -u)" -eq 0 ] && return
+    local user answer rule tmp
+    user=$(id -un)
+    note "The page's Update, Reboot and Power off buttons run sudo without a terminal,"
+    note "so $user needs permission to use sudo without a password."
+    case "${WEBPLOTTER_SUDO_NOPASSWD:-ask}" in
+        yes|y|1) answer=y ;;
+        no|n|0) answer=n ;;
+        *)
+            answer=n
+            [ "$ISTTY" -eq 1 ] && printf '\033[?25h'
+            # The script itself arrives on stdin (curl | bash), so ask the terminal directly
+            { printf ' Allow %s to use sudo without a password? [y/N] ' "$user" > /dev/tty; read -r answer < /dev/tty; } 2>/dev/null || answer=n
+            [ "$ISTTY" -eq 1 ] && printf '\033[?25l'
+            ;;
+    esac
+    case "$answer" in
+        y|Y|yes|YES|Yes) ;;
+        *)
+            warn "Not changed. Update, Reboot and Power off will not work from the page until $user can use sudo without a password (run this installer again to be asked once more)."
+            return
+            ;;
+    esac
+    if ! [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        warn "The user name '$user' is not one this script will write a sudoers rule for. Add one by hand with visudo."
+        return
+    fi
+    rule="/etc/sudoers.d/010_webplotter-$user"
+    tmp=$(mktemp)
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > "$tmp"
+    # visudo checks the rule first: a broken sudoers file would lock everyone out of sudo
+    if sudo visudo -cf "$tmp" >/dev/null 2>&1 && sudo install -m 0440 -o root -g root "$tmp" "$rule"; then
+        ok "$user can use sudo without a password ($rule)"
+    else
+        warn "Could not write $rule. Add a NOPASSWD rule for $user by hand with visudo."
+    fi
+    rm -f "$tmp"
+}
+
 banner
 
 # The service file is written for the user running this script and $HOME, so the two must agree.
@@ -191,7 +244,9 @@ else
 fi
 
 step "Checking administrator access"
+check_passwordless_sudo
 ensure_sudo
+offer_passwordless_sudo
 
 step "Updating the list of available software"
 note "${DIM}Slow on a first run, or while the Pi is still doing its own updates.${RESET}"

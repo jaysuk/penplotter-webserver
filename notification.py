@@ -31,6 +31,7 @@ TOGGLES = {
     'error': 'notify_error',        # failed, or the connection was lost
     'attention': 'notify_pen_change',
     'progress': 'notify_progress_every',
+    'update': 'notify_update',      # a newer version of the web plotter is out
 }
 EVENTS = set(TOGGLES) | {'test'}
 

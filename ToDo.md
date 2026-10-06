@@ -41,4 +41,6 @@ Open:
 - [x] Storage: disk space, file sizes and ages, delete files older than N days, clear the cache
 - [x] Backup and restore (settings, history, presets, queue and optionally the uploaded files)
 - [x] GET /api/status for other programs
+- [x] A notice (header chip, System panel, and Telegram / webhook / MQTT) when a newer VERSION is on the branch, and an Update button that runs the installer in its own systemd unit. Untested on a real Pi. The installer offers to enable passwordless sudo for a user other than pi.
+- [x] Changelog (CHANGELOG.md) shown after an update and in the update dialog. HP-IB flow control disabled (needs a separate shield).
 - [x] More plotter options: plotter profiles, the serial line options and vpype devices of your own cover them. New ideas go here as they come up.

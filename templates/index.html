@@ -44,6 +44,7 @@
         <span class="cs-plotter plotter_name">Default Plotter</span>
       </div>
       <span class="cs-grow"></span>
+      <a href="#" class="cs-updatechip uk-hidden" id="updateChip" title="A new version is available" uk-toggle="target: #modal-update">Update available</a>
       <a href="#" class="uk-icon-link actionOpenConfig" title="Settings" data-uk-tooltip data-uk-icon="icon: settings"></a>
     </header>
     <!-- /HEADER -->
@@ -330,7 +331,6 @@
                   <div class="uk-margin-small">
                     <select id="flowControl" class="uk-select" name="flowControl">
                       <option value="CTS/RTS">CTS/RTS</option>
-                      <option value="HP-IB">HP-IB</option>
                       <option value="XON/XOFF">XON/XOFF</option>
                       <option value="Software">Software flow ctrl.</option>
                       <option value="CalComp">CalComp (ask plotter)</option>
@@ -558,6 +558,7 @@
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionTasmota"><span data-uk-icon="icon: bolt" class="uk-margin-small-right"></span>Toggle Tasmota</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionOpenConfig"><span data-uk-icon="icon: settings" class="uk-margin-small-right"></span>Edit config file</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 openTimelapses"><span data-uk-icon="icon: video-camera" class="uk-margin-small-right"></span>Timelapses</a>
+            <a href="#" class="uk-button uk-button-default uk-width-1-1 openUpdate" uk-toggle="target: #modal-update"><span data-uk-icon="icon: download" class="uk-margin-small-right"></span>Version <span class="versionText">-</span></a>
             <div class="uk-grid-small uk-child-width-1-2" data-uk-grid>
               <div><a href="#" class="uk-button uk-button-default uk-width-1-1" uk-toggle="target: #modal-reboot"><span data-uk-icon="icon: refresh" class="uk-margin-small-right"></span>Reboot Pi</a></div>
               <div><a href="#" class="uk-button uk-button-danger uk-width-1-1" uk-toggle="target: #modal-poweroff"><span data-uk-icon="icon: sign-out" class="uk-margin-small-right"></span>Power off</a></div>
@@ -845,7 +846,6 @@
               <div class="uk-margin-small">
                 <select id="plotter_flowControl" class="uk-select" name="plotter_flowControl">
                   <option value="CTS/RTS">CTS/RTS</option>
-                  <option value="HP-IB">HP-IB</option>
                   <option value="XON/XOFF">XON/XOFF</option>
                   <option value="Software">Software flow ctrl.</option>
                   <option value="CalComp">CalComp (ask plotter)</option>
@@ -937,6 +937,24 @@
               <label class="uk-form-label" for="notify_progress_every">Progress every (percent, 0 = never)</label>
               <div class="uk-margin-small">
                 <input id="notify_progress_every" class="uk-input" name="notify_progress_every" type="number" inputmode="numeric" min="0" max="50" step="1">
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="notify_update">A new version of the web plotter is available</label>
+              <div class="uk-margin-small">
+                <select id="notify_update" class="uk-select" name="notify_update">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="update_check">Look for new versions on GitHub (about once a day)</label>
+              <div class="uk-margin-small">
+                <select id="update_check" class="uk-select" name="update_check">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
               </div>
             </div>
 
@@ -1471,6 +1489,39 @@
   </div>
   <!-- poweroff modal -->
 
+  <!-- update modal -->
+  <div id="modal-update" uk-modal>
+    <div class="uk-modal-dialog uk-modal-body">
+      <h2 class="uk-modal-title">Updates</h2>
+      <p class="uk-margin-small">Installed version: <b class="versionText">-</b><br>
+        Latest on GitHub: <b id="updateLatest">-</b> <span id="updateChecked" class="cs-note"></span></p>
+      <p id="updateMessage" class="uk-margin-small"></p>
+      <div id="updateChanges" class="uk-hidden"></div>
+      <p id="updateWhy" class="cs-note uk-hidden"></p>
+      <p class="cs-note" id="updateAbout">Updating downloads the new version, keeps your files, settings, plotters and history, updates the Python packages and restarts the web plotter. It can take 10 to 20 minutes on a Pi Zero, nothing can be plotted meanwhile and this page reconnects by itself.</p>
+      <pre id="updateLog" class="cs-note uk-hidden" style="white-space: pre-wrap; max-height: 12em; overflow: auto"></pre>
+      <p class="uk-text-right">
+        <button class="uk-button uk-button-default uk-modal-close" type="button">Close</button>
+        <button class="uk-button uk-button-default showChangelog" type="button">Changelog</button>
+        <button class="uk-button uk-button-default checkUpdate" type="button">Check now</button>
+        <button class="uk-button uk-button-primary startUpdate" type="button" disabled>Update</button>
+      </p>
+    </div>
+  </div>
+  <!-- update modal -->
+
+  <!-- changelog modal: shown after an update, and from the update dialog -->
+  <div id="modal-changelog" uk-modal>
+    <div class="uk-modal-dialog uk-modal-body">
+      <h2 class="uk-modal-title" id="changelogTitle">What's new</h2>
+      <div id="changelogBody" style="max-height: 60vh; overflow: auto"></div>
+      <p class="uk-text-right">
+        <button class="uk-button uk-button-primary uk-modal-close" type="button">Close</button>
+      </p>
+    </div>
+  </div>
+  <!-- changelog modal -->
+
   <!-- reboot modal -->
   <div id="modal-reboot" uk-modal>
     <div class="uk-modal-dialog uk-modal-body">
@@ -1982,6 +2033,25 @@
         e.preventDefault();
         clearHistory();
       });
+
+      // Updates
+      jQuery(document).on('click', '.checkUpdate', function (e) {
+        e.preventDefault();
+        checkUpdate();
+      });
+      jQuery(document).on('click', '.startUpdate', function (e) {
+        e.preventDefault();
+        startUpdate();
+      });
+      jQuery(document).on('click', '.openUpdate, #updateChip', function () {
+        loadUpdateStatus();
+      });
+      loadUpdateStatus();
+      jQuery(document).on('click', '.showChangelog', function (e) {
+        e.preventDefault();
+        showChangelog('');
+      });
+      maybeShowChangelog();
 
       // Reboot Pi
       jQuery(document).on('click', '.actionReboot', function (e) {

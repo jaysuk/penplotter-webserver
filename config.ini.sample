@@ -17,6 +17,8 @@ notify_error = true
 notify_pen_change = true
 # A message every this many percent (0 = never)
 notify_progress_every = 0
+# A newer version of the web plotter is available (also controlled by [updates] update_check)
+notify_update = true
 # Optional: a JSON POST for every message, and an MQTT broker (published to <topic>/<event>)
 webhook_url =
 mqtt_host =
@@ -40,6 +42,10 @@ timelapse_keep_frames = false
 buttons_enable = false
 button_start_action = start
 button_stop_action = stop
+
+# Look on GitHub about once a day for a newer version (the VERSION file of the branch this was installed from)
+[updates]
+update_check = true
 
 [plotter]
 name = My Plotter

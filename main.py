@@ -24,6 +24,7 @@ from flask_socketio import SocketIO, emit
 
 import backup
 import buttons
+import changelog
 import globals
 import history
 import hpgl_analysis
@@ -37,6 +38,7 @@ import tasmota
 import timelapse as lapse
 import text_drawing
 import ui_state
+import updater
 import vpype_devices
 import vpype_plugins
 from convert_vpype import convert_file, output_name, create_text as make_text_svg
@@ -103,7 +105,7 @@ PLOT_EXTENSIONS = ('.hpgl', '.cal')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
-for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications', 'buttons'):
+for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications', 'buttons', 'updates'):
     if not config.has_section(_section):
         config.add_section(_section)
 
@@ -1236,7 +1238,111 @@ def api_status():
                   'waiting': sum(1 for item in queue['items'] if item['status'] == 'waiting'),
                   'items': [item['file'] for item in queue['items']]},
         'last_plot': {key: last[0][key] for key in ('id', 'file', 'status', 'started_at', 'finished_at', 'progress')} if last else None,
+        'version': updater.current_version(),
+        'update': updater.summary(),
     })
+
+
+
+# ////////////////////////////////////////////////////////////////////////////
+# Updates: is a newer version out (the VERSION file on the install's own GitHub branch), and run the
+# installer's update from the page. The server checks about once a day unless [updates] update_check is
+# off, and tells the notification channels once per new version unless notify_update is off.
+UPDATE_ANNOUNCED = os.path.join('userdata', 'update_announced.txt')
+
+
+def update_check_enabled():
+    return config_value('updates', 'update_check').lower() not in ('false', '0', 'no', 'off')
+
+
+def check_for_update():
+    """Ask GitHub for the newest version, and announce it the first time it is seen. Returns the status."""
+    updater.check()
+    info = updater.status(cached=True)
+    if info['available'] and updater.read_announced(UPDATE_ANNOUNCED) != info['latest']:
+        name = (config_value('plotter', 'name') or 'Plotter').replace(' ', '-')
+        sent = notification.send(
+            'update', '{}: Web Plotter {} is available (you have {}). Open the page to update.'.format(
+                name, info['latest'], info['current']),
+            version=info['latest'], current=info['current'])
+        if sent:
+            updater.write_announced(UPDATE_ANNOUNCED, info['latest'])
+    return info
+
+
+def update_loop():
+    time.sleep(updater.FIRST_CHECK_S)
+    last = 0
+    while True:
+        try:
+            if update_check_enabled() and time.time() - last >= updater.CHECK_EVERY_S:
+                last = time.time()
+                check_for_update()
+        except Exception:       # nothing here may end the thread
+            traceback.print_exc()
+        time.sleep(updater.TICK_S)
+
+
+def watch_update():
+    """Holds the plot lock while the installer runs, so nothing starts that the restart would cut off.
+    On a good update the service is restarted and this never gets further; otherwise let go again."""
+    wait_for_start = time.time() + 60
+    end = time.time() + updater.STALE_S
+    state = 'idle'
+    try:
+        while time.time() < end:
+            socketio.sleep(2)
+            state = updater.progress()['state']
+            if state in ('done', 'failed') or (state == 'idle' and time.time() > wait_for_start):
+                break
+    finally:
+        plot_lock.release()
+    if state != 'done':
+        notification.send('error', 'The update of the web plotter did not finish. See the page for the log.')
+
+
+# What changed. ?since=<version> gives what is newer than that and no newer than this install,
+# ?since=none only this version's entry (nothing is known about what the browser has seen), and no
+# parameter the latest few.
+@app.route('/changelog', methods=['GET'])
+def get_changelog():
+    entries = changelog.load()
+    current = updater.current_version()
+    since = request.args.get('since')
+    if since is None:
+        shown = entries[:5]
+    elif since == 'none':
+        shown = changelog.between(entries, None, current)[:1]
+    elif updater.parse(since):
+        shown = changelog.between(entries, since, current)
+    else:
+        return 'Invalid version', 400
+    return jsonify({'current': current, 'entries': shown})
+
+
+@app.route('/update/status', methods=['GET'])
+def update_status():
+    return jsonify(updater.status(cached=True))
+
+
+@app.route('/update/check', methods=['POST'])
+def update_check():
+    return jsonify(check_for_update())
+
+
+@app.route('/update/start', methods=['POST'])
+def update_start():
+    if globals.queue_active:
+        return 'The queue is running: Stop it first', 409
+    if not plot_lock.acquire(blocking=False):
+        return 'A plot is running: update when it has finished', 409
+    try:
+        updater.start()
+    except RuntimeError as e:
+        plot_lock.release()
+        return str(e), 500
+    socketio.start_background_task(watch_update)
+    return 'Update started'
 
 
 # ////////////////////////////////////////////////////////////////////////////
@@ -1768,6 +1874,8 @@ CONFIG_FIELDS = {
     'notify_finish': ('notifications', 'notify_finish', _is_bool),
     'notify_error': ('notifications', 'notify_error', _is_bool),
     'notify_pen_change': ('notifications', 'notify_pen_change', _is_bool),
+    'notify_update': ('notifications', 'notify_update', _is_bool),
+    'update_check': ('updates', 'update_check', _is_bool),
     'notify_progress_every': ('notifications', 'notify_progress_every', lambda v: re.fullmatch(r'[0-9]{1,2}', v) is not None and int(v) <= 50),
     'webhook_url': ('notifications', 'webhook_url', lambda v: v == '' or (len(v) <= 500 and notification.URL_RE.fullmatch(v) is not None)),
     'mqtt_host': ('notifications', 'mqtt_host', lambda v: v == '' or notification.HOST_RE.fullmatch(v) is not None),
@@ -1792,7 +1900,7 @@ CONFIG_FIELDS = {
 CONFIG_DEFAULTS = {'buttons_enable': 'false', 'button_start_action': 'start', 'button_stop_action': 'stop',
                    'timelapse_source': 'url', 'timelapse_interval': '10', 'timelapse_fps': '25', 'timelapse_tail': '10',
                    'timelapse_keep_frames': 'false', 'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
-                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true',
+                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true', 'notify_update': 'true', 'update_check': 'true',
                    'notify_progress_every': '0', 'mqtt_port': '1883', 'mqtt_topic': 'webplotter'}
 
 # Never sent back to the browser: an empty password in a save means "keep the current one"
@@ -1863,6 +1971,8 @@ def save_configfile():
     output = {field: config_value(section, option) or CONFIG_DEFAULTS.get(field, '')
               for field, (section, option, _) in CONFIG_FIELDS.items()
               if field not in WRITE_ONLY_FIELDS}
+    if output['plotter_flowControl'] not in FLOW_CONTROLS:      # a flow control that is no longer offered (HP-IB)
+        output['plotter_flowControl'] = 'CTS/RTS'
     output['auth_password_set'] = bool(config_value('auth', 'password'))
     output['mqtt_password_set'] = bool(config_value('notifications', 'mqtt_password'))
     output['telegram_token_set'] = bool(notification._setting('telegram_token'))
@@ -2034,5 +2144,6 @@ def connection(message):
 
 if __name__ == "__main__":
     setup_buttons()
+    threading.Thread(target=update_loop, daemon=True).start()
     # use_reloader is off even in debug mode: it would restart the server mid-plot
     socketio.run(app, host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False, allow_unsafe_werkzeug=True)

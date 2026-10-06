@@ -67,6 +67,21 @@ body.console {
 }
 .cs-top .cs-grow { flex: 1; }
 
+/* a newer version is out: opens the update dialog */
+.cs-updatechip {
+  font: 600 11.5px/1 var(--label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.55em 0.9em;
+  border-radius: 99px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid currentColor;
+  margin-right: 14px;
+  text-decoration: none;
+}
+.cs-updatechip:hover { color: var(--warn); filter: brightness(1.15); text-decoration: none; }
+
 /* ---------- transport bar ---------- */
 .cs-transport {
   position: sticky;

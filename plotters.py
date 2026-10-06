@@ -28,7 +28,8 @@ MAX_FILE_BYTES = 256 * 1024
 # What a profile can name. main.py and send2serial.py use the same lists.
 DEVICES = {'hp7475a', 'hp7440a', 'hp7550', 'dxy', 'sketchmate', 'dmp_161',
            'designmate', 'artisan', 'mp4200'}
-FLOW_CONTROLS = {'CTS/RTS', 'HP-IB', 'XON/XOFF', 'Software', 'None', 'CalComp'}
+# HP-IB is not offered: it needs a separate shield for the Pi (send2serial still has its branches)
+FLOW_CONTROLS = {'CTS/RTS', 'XON/XOFF', 'Software', 'None', 'CalComp'}
 PEN_CHANGES = {'pause', 'auto'}
 
 ID_RE = re.compile(r'[a-z0-9][a-z0-9_-]{0,39}')

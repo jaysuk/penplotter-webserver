@@ -62,7 +62,7 @@ def test_jog(app, client):
     assert not app.main.plot_lock.locked()
 
 
-@pytest.mark.parametrize('flow', ['CTS/RTS', 'Software', 'XON/XOFF', 'None', 'HP-IB'])
+@pytest.mark.parametrize('flow', ['CTS/RTS', 'Software', 'XON/XOFF', 'None'])
 def test_the_plotter_is_not_reset(app, client, flow):
     """Moving the pen must not send IN; or the handshake set-up that a plot starts with."""
     client.post('/plotter/pen_up', data={**FORM, 'flowControl': flow})

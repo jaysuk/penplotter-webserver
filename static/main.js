@@ -1941,6 +1941,7 @@ function updateConfiguration() {
 // The notification settings that are plain fields in the config modal
 const NOTIFICATION_FIELDS = [
   "notify_start", "notify_finish", "notify_error", "notify_pen_change", "notify_progress_every",
+  "notify_update", "update_check",
   "webhook_url", "mqtt_host", "mqtt_port", "mqtt_topic", "mqtt_username",
 ];
 
@@ -2049,5 +2050,181 @@ function saveConfig() {
     .catch(function (error) {
       notify(errorMessage(error), "danger");
       console.error(error);
+    });
+}
+
+
+// ---- Updates ----------------------------------------------------------------------------------
+
+let updateTimer = null;
+let updateVersionBefore = null;
+
+// What the server says about versions: the chip in the header, the System panel and the dialog
+function showUpdate(info) {
+  jQuery(".versionText").text(info.current || "-");
+  jQuery("#updateLatest").text(info.latest || "-");
+  jQuery("#updateChecked").text(info.checked_at ? "(checked " + new Date(info.checked_at * 1000).toLocaleString() + ")" : "");
+  jQuery("#updateChip").toggleClass("uk-hidden", !info.available);
+
+  const state = info.progress.state;
+  let message = "";
+  if (state === "running") {
+    message = "Updating. This page reconnects by itself when the web plotter is back.";
+  } else if (state === "failed") {
+    message = "The update did not finish. The old version is still in place; the log is below.";
+  } else if (info.available) {
+    message = "Version " + info.latest + " is available.";
+  } else if (info.latest) {
+    message = "You have the latest version.";
+  } else if (info.error) {
+    message = "Could not look for a new version (" + info.error + ").";
+  } else {
+    message = "Not checked yet.";
+  }
+  jQuery("#updateMessage").text(message);
+  jQuery("#updateWhy").text(info.why_not || "").toggleClass("uk-hidden", info.can_update);
+  const changes = info.available ? info.changes || [] : [];
+  renderChanges(jQuery("#updateChanges").empty().toggleClass("uk-hidden", changes.length === 0), changes);
+  const log = info.progress.log || [];
+  jQuery("#updateLog").text(log.join("\n")).toggleClass("uk-hidden", state === "idle" || log.length === 0);
+  jQuery(".startUpdate")
+    .text(info.available ? "Update to " + info.latest : "Reinstall this version")
+    .prop("disabled", !info.can_update || state === "running");
+}
+
+function loadUpdateStatus() {
+  return axios
+    .get("/update/status")
+    .then(function (response) {
+      showUpdate(response.data);
+      if (response.data.progress.state === "running") watchUpdate(response.data.current);
+    })
+    .catch(function (error) {
+      console.error(error); // a missing answer is not worth a message: the page works without it
+    });
+}
+
+function checkUpdate() {
+  jQuery(".checkUpdate").prop("disabled", true);
+  return axios
+    .post("/update/check")
+    .then(function (response) {
+      showUpdate(response.data);
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    })
+    .then(function () {
+      jQuery(".checkUpdate").prop("disabled", false);
+    });
+}
+
+function startUpdate() {
+  const before = jQuery(".versionText").first().text();
+  jQuery(".startUpdate").prop("disabled", true);
+  return axios
+    .post("/update/start")
+    .then(function () {
+      notify("Update started", "warning");
+      watchUpdate(before);
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+      return loadUpdateStatus();
+    });
+}
+
+// Ask every few seconds until the installer is done: the server goes away while it restarts, then
+// comes back with the new version, and the page is loaded again to get the new files.
+function watchUpdate(versionBefore) {
+  if (updateTimer) return;
+  updateVersionBefore = versionBefore;
+  jQuery("#updateMessage").text("Updating. This page reconnects by itself when the web plotter is back.");
+  updateTimer = setInterval(function () {
+    axios
+      .get("/update/status", { timeout: 5000 })
+      .then(function (response) {
+        const info = response.data;
+        showUpdate(info);
+        const state = info.progress.state;
+        if (state === "done" || (info.current && info.current !== updateVersionBefore)) {
+          clearInterval(updateTimer);
+          location.reload();
+        } else if (state === "failed") {
+          clearInterval(updateTimer);
+          updateTimer = null;
+          UIkit.modal("#modal-update").show();
+        }
+      })
+      .catch(function () {
+        jQuery("#updateMessage").text("The web plotter is restarting. Waiting for it to come back...");
+      });
+  }, 3000);
+}
+
+// ---- Changelog --------------------------------------------------------------------------------
+
+const SEEN_VERSION_KEY = "webplotter-seen-version";
+
+// Entries as the server parsed them ({version, date, groups: [{title, items}]}), as text only
+function renderChanges(container, entries) {
+  for (const entry of entries) {
+    const box = jQuery("<div>").addClass("uk-margin-small-bottom");
+    box.append(jQuery("<h4>").addClass("uk-margin-remove").text("Version " + entry.version + (entry.date ? " (" + entry.date + ")" : "")));
+    for (const group of entry.groups) {
+      if (group.title) box.append(jQuery("<h5>").addClass("uk-margin-small-top uk-margin-remove-bottom").text(group.title));
+      const list = jQuery("<ul>").addClass("uk-list uk-list-bullet uk-margin-small uk-text-small");
+      for (const item of group.items) list.append(jQuery("<li>").text(item));
+      box.append(list);
+    }
+    container.append(box);
+  }
+}
+
+function showChangelog(since) {
+  const query = since === "" ? "" : "?since=" + encodeURIComponent(since);
+  return axios
+    .get("/changelog" + query)
+    .then(function (response) {
+      const entries = response.data.entries;
+      if (!entries.length) {
+        notify("There is nothing new to show", "primary");
+        return;
+      }
+      jQuery("#changelogTitle").text(since === "" ? "Changelog" : "What's new");
+      renderChanges(jQuery("#changelogBody").empty(), entries);
+      UIkit.modal("#modal-changelog").show();
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
+// After an update: show what changed since this browser last looked. A browser that has never looked
+// is shown the current version's notes once. Without somewhere to remember it (blocked storage) it stays
+// quiet rather than asking at every load.
+function maybeShowChangelog() {
+  let seen = null;
+  try {
+    seen = window.localStorage.getItem(SEEN_VERSION_KEY) || "none";
+  } catch (e) {
+    return;
+  }
+  axios
+    .get("/changelog?since=" + encodeURIComponent(seen))
+    .then(function (response) {
+      try {
+        window.localStorage.setItem(SEEN_VERSION_KEY, response.data.current || "");
+      } catch (e) {
+        return;
+      }
+      if (response.data.entries.length) {
+        jQuery("#changelogTitle").text("What's new");
+        renderChanges(jQuery("#changelogBody").empty(), response.data.entries);
+        UIkit.modal("#modal-changelog").show();
+      }
+    })
+    .catch(function (error) {
+      console.error(error); // not worth a message
     });
 }
