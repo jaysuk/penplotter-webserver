@@ -569,6 +569,10 @@
 
       </div>
     </main>
+    <footer class="cs-foot">
+      <span>Web Plotter <a href="#" class="openUpdate" title="Updates" uk-toggle="target: #modal-update">v<span class="versionText">{{ version or '-' }}</span></a></span>
+      <a href="#" class="showChangelog">Changelog</a>
+    </footer>
     <script src="{{url_for('static', filename='layout.js')}}"></script>
     <script src="{{url_for('static', filename='layout-ui.js')}}"></script>
 

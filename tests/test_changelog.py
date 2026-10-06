@@ -113,6 +113,12 @@ def test_a_bad_version_is_refused(client, notes, since):
     assert client.get('/changelog', query_string={'since': since}).status_code == 400
 
 
+def test_the_footer_shows_the_version(app, client):
+    page = client.get('/').get_data(as_text=True)
+    assert '<footer class="cs-foot">' in page
+    assert 'v<span class="versionText">{}</span>'.format(app.updater.current_version()) in page
+
+
 def test_the_page_shows_the_changelog_after_an_update(client):
     page = client.get('/').get_data(as_text=True)
     assert 'id="modal-changelog"' in page and 'maybeShowChangelog()' in page

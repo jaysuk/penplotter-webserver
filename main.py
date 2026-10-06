@@ -620,7 +620,8 @@ def pdf_to_svg(pdf_path, svg_path):
 @app.route('/')
 def index():
     files = make_tree(app.config['UPLOAD_PATH'])
-    return render_template('index.html', files=files, pdf_import=pdf_import_available())
+    return render_template('index.html', files=files, pdf_import=pdf_import_available(),
+                           version=updater.current_version() or '')
 
 
 # Upload
