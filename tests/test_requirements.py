@@ -15,7 +15,7 @@ IMPORT_NAMES = {
     'requests': {'requests'},
     'flask': {'flask', 'werkzeug', 'jinja2', 'markupsafe', 'itsdangerous', 'click'},
     'flask-socketio': {'flask_socketio', 'socketio', 'engineio'},
-    'vpype': {'vpype', 'vpype_cli', 'click', 'tomli'},      # tomli: vpype needs it on Python < 3.11
+    'vpype': {'vpype', 'vpype_cli', 'click', 'tomli', 'tomllib'},      # tomli: vpype needs it on Python < 3.11 (tomllib is the standard library from 3.11)
     'paho-mqtt': {'paho'},
     'gpiozero': {'gpiozero'},
 }
