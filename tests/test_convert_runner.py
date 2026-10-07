@@ -270,12 +270,14 @@ def test_cancel_route(app, client, monkeypatch):
 def test_the_real_converter_runs_in_a_child(app, tmp_path):
     pytest.importorskip('vpype')
     pytest.importorskip('vpype_cli')
-    from test_convert import SVG
+    from test_convert import SVG, ROOT
+    # The child must be the real one from the repository (the copy under test has only the stub converter next to it)
+    command = [sys.executable, os.path.join(ROOT, 'convert_runner.py')]
     (tmp_path / 'uploads').mkdir()
     (tmp_path / 'uploads' / 'a.svg').write_text(SVG)
     seen = []
     result = app.convert_runner.run(
         'convert_file', ['uploads/a.svg', 'a4', 'portrait', 'hp7475a', '', '', '', '', '', ''], {},
-        emit=lambda name, data: seen.append(data['data']), cwd=str(tmp_path), timeout=300)
+        emit=lambda name, data: seen.append(data['data']), command=command, cwd=str(tmp_path), timeout=300)
     assert result.startswith('Exported') and 'File converted.' in seen
     assert any(name.endswith('.hpgl') for name in os.listdir(tmp_path / 'uploads'))
