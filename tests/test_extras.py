@@ -164,6 +164,7 @@ def test_cal_files_take_no_hpgl_settings(app, client, uploads, plotter):
     assert client.post('/start_plot', data=dict(data, plot_speed='5')).status_code == 400
     assert client.post('/start_plot', data=dict(data, frame_check='on')).status_code == 400
     assert client.post('/start_plot', data=data).data == b'Plot started'
+    assert wait_for(lambda: not app.main.plot_lock.locked())          # it must not run into the next test
 
 
 def test_a_resumed_plot_has_the_settings_too(app, client, plotter, monkeypatch):
