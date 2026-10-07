@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from test_routes import PLOT, slow_plot, wait_for      # noqa: F401  (slow_plot is a fixture)
+from test_routes import PLOT, slow_plot, wait_for, wait_until_plotting      # noqa: F401  (slow_plot is a fixture)
 
 MANIFEST = json.dumps({'app': 'webplotter', 'format': 1, 'created': 1, 'contains': []})
 
@@ -94,7 +94,7 @@ def test_the_temporary_file_is_removed(client, tmp_path):
 def test_a_backup_can_be_made_while_plotting(app, client, uploads, slow_plot):
     (uploads / 'a.hpgl').write_bytes(b'IN;')
     client.post('/start_plot', data=PLOT)
-    assert wait_for(lambda: app.main.plot_lock.locked())
+    assert wait_until_plotting(app)
     assert client.get('/backup').status_code == 200
     client.post('/stop_plot')
 
@@ -261,7 +261,7 @@ def test_a_zip_that_lies_about_its_size_is_cut_short(app, client, monkeypatch):
 def test_nothing_is_restored_while_plotting(app, client, uploads, slow_plot):
     (uploads / 'a.hpgl').write_bytes(b'IN;')
     client.post('/start_plot', data=PLOT)
-    assert wait_for(lambda: app.main.plot_lock.locked())
+    assert wait_until_plotting(app)
     assert restore(client, make_zip({'config.ini': '[plotter]\nname = Nope\n'})).status_code == 409
     assert client.get('/save_configfile').get_json()['plotter_name'] != 'Nope'
     client.post('/stop_plot')
@@ -273,3 +273,17 @@ def test_a_restore_that_fails_leaves_no_files_behind(app, client):
     restore(client, make_zip({'history.db': b'broken'}))
     assert not os.path.exists('restore.db')
     assert not app.main.plot_lock.locked()
+
+
+def test_a_history_from_before_schema_versions_is_migrated(app, client):
+    restore(client, make_zip({'history.db': history_db([('old.hpgl', 'completed')])}))      # user_version 0
+    with app.history._connect() as conn:
+        assert conn.execute('PRAGMA user_version').fetchone()[0] == app.history.SCHEMA_VERSION
+    assert client.get('/pen_usage').get_json() == {'pens': []}          # and the pen log table exists again
+
+
+def test_a_history_from_a_newer_version_is_refused(app, client):
+    newer = history_db([('x.hpgl', 'completed')], 'PRAGMA user_version = {};'.format(app.history.SCHEMA_VERSION + 1))
+    response = restore(client, make_zip({'history.db': newer, 'config.ini': '[plotter]\nname = Changed\n'}))
+    assert response.status_code == 400 and b'newer web plotter' in response.data
+    assert client.get('/save_configfile').get_json()['plotter_name'] != 'Changed'      # nothing was applied

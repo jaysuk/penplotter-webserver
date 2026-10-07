@@ -31,7 +31,9 @@ def test_the_settings_of_a_plot_are_kept(app, client, uploads, slow_plot, monkey
                               'flowControl': 'CTS/RTS', 'tasmota': 'on', 'timelapse': '',
                               'pens': '', 'pen_change': 'pause',
                               'bytesize': '8', 'parity': 'N', 'stopbits': '1', 'xonxoff': 'auto', 'rtscts': 'auto',
-                              'dsrdtr': 'auto', 'dtr': 'auto', 'rts': 'auto', 'timeout': '', 'open_delay': '0'}
+                              'dsrdtr': 'auto', 'dtr': 'auto', 'rts': 'auto', 'timeout': '', 'open_delay': '0',
+                              'plot_speed': '', 'plot_force': '', 'plot_accel': '', 'offset_x': '', 'offset_y': '',
+                              'frame_check': ''}
     assert job['file_size'] == 3
     assert 'options' not in history_rows(client)[0]        # the page does not need them
 

@@ -569,3 +569,7 @@ body.console {
 .cs-foot a { color: inherit; text-decoration: none; }
 .cs-foot a:hover { color: var(--accent); text-decoration: underline; }
 
+/* The number of a waiting queue entry is the handle for dragging it */
+#queueList .q-grip { cursor: grab; touch-action: none; }
+#queueList .uk-sortable-drag { background: var(--panel); box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+#queueList .uk-sortable-placeholder { opacity: .4; }

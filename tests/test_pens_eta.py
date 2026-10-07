@@ -52,6 +52,8 @@ def start(app, uploads):
     app.globals.printing = False      # a failed test must not leave a plot waiting for a pen
     for thread in threads:
         thread.join(5)
+    leaked = [thread for thread in threads if thread.is_alive()]
+    assert not leaked, 'a sender thread did not end: it would leak into the next test'
 
 
 # ---- time left --------------------------------------------------------------------------------

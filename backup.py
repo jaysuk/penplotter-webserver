@@ -151,8 +151,10 @@ def read_devices(archive):
         raise BackupError('The vpype devices in the backup cannot be used: ' + str(e))
 
 
-def extract_database(archive, folder):
-    """Copy the history out of the zip into `folder` and check it. Returns the path."""
+def extract_database(archive, folder, max_schema=None):
+    """Copy the history out of the zip into `folder` and check it. Returns the path.
+
+    `max_schema` is the newest layout of the database this version knows (history.SCHEMA_VERSION)."""
     path = os.path.join(folder, 'restore.db')
     written = 0
     with archive.open(DATABASE) as member, open(path, 'wb') as out:
@@ -170,6 +172,8 @@ def extract_database(archive, folder):
             if conn.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise BackupError('The history in the backup is damaged')
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            if max_schema is not None and conn.execute('PRAGMA user_version').fetchone()[0] > max_schema:
+                raise BackupError('The history in the backup was made by a newer web plotter: update this one first')
             if 'jobs' not in tables:
                 raise BackupError('The history in the backup is not a web plotter history')
             # Triggers and views would run inside this app's own queries

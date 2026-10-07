@@ -44,3 +44,12 @@ Open:
 - [x] A notice (header chip, System panel, and Telegram / webhook / MQTT) when a newer VERSION is on the branch, and an Update button that runs the installer in its own systemd unit. Untested on a real Pi. The installer offers to enable passwordless sudo for a user other than pi.
 - [x] Changelog (CHANGELOG.md) shown after an update and in the update dialog. HP-IB flow control disabled (needs a separate shield).
 - [x] More plotter options: plotter profiles, the serial line options and vpype devices of your own cover them. New ideas go here as they come up.
+- [x] Plot adjustments for one plot: pen speed, force and acceleration, an origin offset, and tracing the drawing's area first (untested on a plotter)
+- [x] Copies in the queue, and dragging the waiting files into a new order
+- [x] A plot cut short by a power cut or a restart can be resumed (position noted about every 30 s)
+- [x] Pen use log (how far each pen has drawn, New pen)
+- [x] Login throttle after wrong passwords, optional HTTPS
+- [x] Schema version for history.db, with migrations; a database or backup from a newer version is refused
+- [x] File name length guard, one conversion at a time with a warning while plotting, backup size shown, pen choice from another file's preview
+- [x] Test hygiene: pytest-timeout, wait_until_plotting, thread leak checks, requirements check, CI import and apt retry
+- [x] Conversion in its own process (low priority, a Cancel button, a timeout; a setting turns it off). Untested on a Pi: see PLAN.md, D1

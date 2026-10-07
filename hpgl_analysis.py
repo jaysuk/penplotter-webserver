@@ -309,6 +309,23 @@ def pens_used(analysis):
     return list(totals.values())
 
 
+def pens_drawn(analysis, offset=None):
+    """Millimetres of pen-down travel per pen for the first `offset` bytes of the analysed file
+    (all of it by default): {pen: mm}. A pen segment that was only partly sent counts for the
+    share of its bytes that were."""
+    if analysis is None:
+        return {}
+    offset = analysis['bytes'] if offset is None else offset
+    drawn = {}
+    for segment in analysis['segments']:
+        span = segment['end'] - segment['start']
+        if span <= 0 or offset <= segment['start']:
+            continue
+        share = min(1.0, (offset - segment['start']) / span)
+        drawn[segment['pen']] = drawn.get(segment['pen'], 0.0) + segment['draw_length'] * share / analysis['units_per_mm']
+    return drawn
+
+
 def pen_changes(analysis):
     """Offsets where the plot moves on to a different pen, as [(offset, pen)].
 
@@ -365,6 +382,73 @@ def filter_pens(src, dst, pens, analysis):
             data = _render(code, args)
             out.write(data)
             written += len(data)
+    return written
+
+
+# Plot-time changes (see tweak_file)
+SPEED_RANGE = (0.1, 100.0)         # cm/s, VS
+FORCE_RANGE = (1, 128)             # grams, FS
+ACCEL_RANGE = (1, 32)              # AS
+MAX_OFFSET_MM = 500
+# Commands that put the drawing in a different place when the origin is moved: a file that scales
+# or windows its own coordinate system cannot be shifted in plotter units
+NO_OFFSET_COMMANDS = {'SC', 'IW', 'IP', 'RO'}
+OVERRIDDEN = {'VS', 'FS', 'AS'}
+
+
+def _shift(numbers, dx, dy):
+    """Pairs of numbers moved by (dx, dy), as an argument list."""
+    return b','.join(b'%d' % round(value + (dx if i % 2 == 0 else dy)) for i, value in enumerate(numbers))
+
+
+def tweak_file(src, dst, speed=None, force=None, accel=None, dx=0, dy=0):
+    """Write a copy of `src` for one plot: with the pen speed (VS, cm/s), pen force (FS) and
+    acceleration (AS) the plotter should use, and the drawing moved by (dx, dy) plotter units.
+
+    The speed, force and acceleration replace the ones in the file: each is sent after every IN or DF
+    (which reset them) and the file's own commands for them are left out. An offset moves the
+    absolute coordinates; coordinates after PR are relative to those, so they follow. A file that sets its own
+    scaling or window (SC, IW, IP, RO) cannot be moved. Returns the new file's size."""
+    overrides = b''
+    if speed is not None:
+        overrides += b'VS%g;' % speed
+    if force is not None:
+        overrides += b'FS%d;' % force
+    if accel is not None:
+        overrides += b'AS%d;' % accel
+    dropped = {code for code, value in (('VS', speed), ('FS', force), ('AS', accel)) if value is not None}
+    moved = bool(dx or dy)
+
+    state = State()
+    written = 0
+    first = True
+    with open(src, 'rb') as f, open(dst, 'wb') as out:
+        def put(data):
+            nonlocal written
+            out.write(data)
+            written += len(data)
+
+        for start, end, code, args in iter_commands(f):
+            if first and code not in ('IN', 'DF') and overrides:
+                put(overrides)      # a file that does not start with IN;
+            first = False
+            if moved and code in NO_OFFSET_COMMANDS:
+                raise ValueError('This file sets its own scaling or window ({}): it cannot be moved'.format(code))
+            if code in dropped:
+                state.apply(code, args)
+                continue
+            data = _render(code, args)
+            if moved:
+                numbers = parse_numbers(args)
+                absolute = code == 'PA' or (code in ('PU', 'PD') and state.absolute)
+                if numbers and (absolute or code in ('EA', 'RA')) and len(numbers) % 2 == 0:
+                    data = code.encode('latin-1') + _shift(numbers, dx, dy) + b';'
+                elif code == 'AA' and len(numbers) >= 3:
+                    data = b'AA' + _shift(numbers[:2], dx, dy) + b',' + args.split(b',', 2)[2].strip() + b';'
+            state.apply(code, args)
+            put(data)
+            if code in ('IN', 'DF') and overrides:
+                put(overrides)
     return written
 
 

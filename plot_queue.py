@@ -80,6 +80,33 @@ def add(options, pause_after=False):
         return None
 
 
+def room():
+    """How many more plots fit in the queue."""
+    return max(MAX_ITEMS - len(items()), 0)
+
+
+def reorder(ids):
+    """Put the waiting plots in the order of `ids`, which must name every waiting plot exactly once
+    (a plot that is running stays where it is). Returns False when it does not, or on a database error."""
+    try:
+        ids = [int(i) for i in ids]
+    except (ValueError, TypeError):
+        return False
+    try:
+        with history.database() as conn:
+            rows = conn.execute('SELECT id, position FROM queue_items WHERE status = ? ORDER BY position, id',
+                                (WAITING,)).fetchall()
+            if sorted(ids) != sorted(row['id'] for row in rows):
+                return False
+            # The waiting plots keep the set of positions they had, handed out in the new order
+            for item_id, position in zip(ids, sorted(row['position'] for row in rows)):
+                conn.execute('UPDATE queue_items SET position = ? WHERE id = ?', (position, item_id))
+    except sqlite3.Error as e:
+        print('Could not reorder the plot queue:', repr(e))
+        return False
+    return True
+
+
 def next_waiting():
     """The plot to run next, or None."""
     for item in items():

@@ -22,13 +22,16 @@ from flask import Flask, Response, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 
+import auth_throttle
 import backup
 import buttons
 import changelog
+import convert_runner
 import globals
 import history
 import hpgl_analysis
 import notification
+import pen_usage
 import plot_queue
 import plotter_control
 import plotters
@@ -48,6 +51,7 @@ globals.initialize()
 history.init()
 presets.init()
 plot_queue.init()
+pen_usage.init()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
@@ -71,6 +75,12 @@ TEXT_SIZE_RE = re.compile(r'[0-9]{1,3}(\.[0-9])?')
 TEXT_SIZE_MM = (3, 200)
 PENS_RE = re.compile(r'[0-9]{1,2}(,[0-9]{1,2}){0,15}')
 PEN_CHANGES = plotters.PEN_CHANGES
+# Plot-time settings (see plot_tweaks): decimals only where they make sense
+PLOT_SPEED_RE = re.compile(r'[0-9]{1,3}(\.[0-9])?')
+PLOT_FORCE_RE = re.compile(r'[0-9]{1,3}')
+PLOT_ACCEL_RE = re.compile(r'[0-9]{1,2}')
+OFFSET_RE = re.compile(r'-?[0-9]{1,3}(\.[0-9]{1,2})?')
+MAX_COPIES = 20
 PORT_RE = re.compile(r'^(/dev/[\w./-]+|COM\d+)$')
 SPEED_RE = re.compile(r'^(\d+(\.\d+)?)?$')
 HOST_RE = re.compile(r'^([A-Za-z0-9.-]+(:\d{1,5})?)?$')
@@ -105,7 +115,7 @@ PLOT_EXTENSIONS = ('.hpgl', '.cal')
 # Analysing a bigger file takes long enough on a Pi to be worth a line in the log
 SLOW_ANALYSIS_BYTES = 1024 * 1024
 
-for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications', 'buttons', 'updates'):
+for _section in ('telegram', 'tasmota', 'timelapse', 'plotter', 'notifications', 'buttons', 'updates', 'server'):
     if not config.has_section(_section):
         config.add_section(_section)
 
@@ -126,23 +136,41 @@ def auth_configured():
     return bool(config_value('auth', 'username') and config_value('auth', 'password'))
 
 
+def client_address():
+    return request.remote_addr or ''
+
+
 def is_authorized():
-    """Optional HTTP basic auth, enabled by setting [auth] username/password in config.ini."""
+    """Optional HTTP basic auth, enabled by setting [auth] username/password in config.ini.
+
+    An address that sends too many wrong passwords is refused for a while (auth_throttle)."""
     if not auth_configured():
         return True
     auth = request.authorization
     if auth is None:
         return False
+    address = client_address()
+    if auth_throttle.blocked(address):
+        return False
     user_ok = hmac.compare_digest((auth.username or '').encode('utf-8'),
                                   config_value('auth', 'username').encode('utf-8'))
     pass_ok = hmac.compare_digest((auth.password or '').encode('utf-8'),
                                   config_value('auth', 'password').encode('utf-8'))
-    return user_ok and pass_ok
+    if user_ok and pass_ok:
+        auth_throttle.succeeded(address)
+        return True
+    if auth_throttle.failed(address):
+        print('Too many wrong passwords from', address, '- refusing it for a while')
+    return False
 
 
 @app.before_request
 def guard_request():
     if not is_authorized():
+        wait = auth_throttle.blocked(client_address())
+        if wait:
+            return Response('Too many wrong passwords: try again in {} seconds'.format(wait), 429,
+                            {'Retry-After': str(wait)})
         return Response('Authentication required', 401,
                         {'WWW-Authenticate': 'Basic realm="Web Plotter"'})
 
@@ -269,13 +297,58 @@ def preset_form(options):
     }
 
 
+# The name of a converted file says which options made it, so a long custom command can push it over what
+# the file system takes (255 bytes). Stay well under that.
+MAX_NAME_BYTES = 200
+
+
+def result_name(file, options):
+    """The file name a conversion with these options produces."""
+    return os.path.basename(output_name(
+        file, options['outputsize'], options['pageorientation'], options['device'], options['custom_comand'],
+        options['linemerge'], options['linesort'], options['linesimplify'], options['reloop'],
+        options['margin'], options['rotate'], options['mirror_x'], options['mirror_y']))
+
+
+def name_error(file, options):
+    """A message if the converted file's name would be too long, else None."""
+    length = len(result_name(file, options).encode('utf-8'))
+    if length > MAX_NAME_BYTES:
+        return ('The converted file would be called {} characters long (at most {}): use a shorter file name '
+                'or a shorter custom vpype command'.format(length, MAX_NAME_BYTES))
+    return None
+
+
+# Conversions are heavy on a Pi and slow a running plot down a little: one at a time
+conversion_lock = threading.Lock()
+BUSY_CONVERTING = ('Another conversion is still running: wait for it to finish', 409)
+
+
+def separate_conversion():
+    """Convert in a child process (the default): vpype then does not share the server's interpreter with
+    the thread that streams a plot. Off in the settings for a Pi that cannot spare the memory."""
+    return config_value('plotter', 'convert_separate').lower() not in ('false', '0', 'no', 'off')
+
+
 def run_conversion(file, options, output=None):
     """Convert an svg with validated options. Returns the message for the UI."""
-    return convert_file(file, options['outputsize'], options['pageorientation'], options['device'],
-                        options['speed'], options['custom_comand'], options['linemerge'], options['linesort'],
-                        options['linesimplify'], options['reloop'], socketio,
-                        margin=options['margin'], rotate=options['rotate'],
-                        mirror_x=options['mirror_x'], mirror_y=options['mirror_y'], output=output)
+    positional = [file, options['outputsize'], options['pageorientation'], options['device'],
+                  options['speed'], options['custom_comand'], options['linemerge'], options['linesort'],
+                  options['linesimplify'], options['reloop']]
+    keywords = dict(margin=options['margin'], rotate=options['rotate'],
+                    mirror_x=options['mirror_x'], mirror_y=options['mirror_y'], output=output)
+    if separate_conversion():
+        return convert_runner.run('convert_file', positional, keywords,
+                                  emit=lambda name, data: socketio.emit(name, data))
+    return convert_file(*positional, socketio, **keywords)
+
+
+def run_text_drawing(text, font, size, page, landscape, margin, align, output):
+    """Write the svg of a typed text (in a child process like a conversion, unless that is off)."""
+    if separate_conversion():
+        return convert_runner.run('create_text', [text, font, size, page, landscape, margin, align],
+                                  {'output': output}, error_types={'TextError': text_drawing.TextError})
+    return make_text_svg(text, font, size, page, landscape, margin, align, output=output)
 
 
 class PlotEvents:
@@ -356,6 +429,17 @@ def resume_point(outcome, resume_start=0, resume_skip=0):
     commands, then the rest of the original from `resume_start`), so its count is mapped back."""
     if outcome not in ('stopped', 'failed'):
         return None
+    return current_offset(resume_start, resume_skip)
+
+
+# How often a running plot notes where it has got to (history.checkpoint), so one that a power cut or a
+# restart ended can still be resumed. A few bytes of the database every half a minute spare the SD card.
+CHECKPOINT_EVERY = 30
+CHECKPOINT_MIN_BYTES = 1024
+
+
+def current_offset(resume_start=0, resume_skip=0):
+    """Where a plot could carry on from right now (see resume_point), or None before anything is sent."""
     if globals.sent_offset == 0:
         return None         # nothing was sent: there is nothing to carry on from
     sent = max(globals.sent_offset - globals.buffer_used, 0)
@@ -397,6 +481,78 @@ def finish_timelapse(events, recorder):
     return None
 
 
+def remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def record_pen_use(analysis, outcome):
+    """Add what this plot drew to the log of how far each pen has gone. Never raises."""
+    try:
+        if analysis is None or outcome is None or (globals.sent_offset == 0 and outcome != 'completed'):
+            return
+        offset = None if outcome == 'completed' else max(globals.sent_offset - globals.buffer_used, 0)
+        pen_usage.add(hpgl_analysis.pens_drawn(analysis, offset))
+    except Exception:
+        traceback.print_exc()
+
+
+def checkpoint_loop(job, done, resume_start, resume_skip):
+    """Runs beside a plot: every CHECKPOINT_EVERY seconds, record how far it has got. Ends when `done` is set."""
+    saved = 0
+    while not done.wait(CHECKPOINT_EVERY):
+        offset = current_offset(resume_start, resume_skip)
+        if offset and offset - saved >= CHECKPOINT_MIN_BYTES:
+            history.checkpoint(job, offset)
+            saved = offset
+
+
+def plot_tweaks(options):
+    """The plot-time changes an options dict asks for, as keyword arguments of hpgl_analysis.tweak_file
+    (empty when there are none). Offsets are in millimetres in the form and plotter units here."""
+    def number(key):
+        value = (options or {}).get(key) or ''
+        return float(value) if value else None
+    tweaks = {}
+    speed, force, accel = number('plot_speed'), number('plot_force'), number('plot_accel')
+    if speed is not None:
+        tweaks['speed'] = speed
+    if force is not None:
+        tweaks['force'] = int(force)
+    if accel is not None:
+        tweaks['accel'] = int(accel)
+    dx, dy = number('offset_x') or 0.0, number('offset_y') or 0.0
+    if dx or dy:
+        tweaks['dx'], tweaks['dy'] = round(dx * hpgl_analysis.UNITS_PER_MM), round(dy * hpgl_analysis.UNITS_PER_MM)
+    return tweaks
+
+
+def apply_tweaks(events, send_path, base, options):
+    """A copy of the file to send with the plot-time changes (speed, force, acceleration, offset).
+    Returns (path, analysis), or (send_path, None) when there is nothing to change."""
+    tweaks = plot_tweaks(options)
+    if not tweaks:
+        return send_path, None
+    os.makedirs(PLOT_CACHE, exist_ok=True)
+    path = os.path.join(PLOT_CACHE, base + '-settings.hpgl')
+    hpgl_analysis.tweak_file(send_path, path, **tweaks)
+    parts = []
+    if 'speed' in tweaks:
+        parts.append('speed {:g} cm/s'.format(tweaks['speed']))
+    if 'force' in tweaks:
+        parts.append('force {} g'.format(tweaks['force']))
+    if 'accel' in tweaks:
+        parts.append('acceleration {}'.format(tweaks['accel']))
+    if 'dx' in tweaks:
+        parts.append('moved {:g} mm right, {:g} mm up'.format(
+            tweaks['dx'] / hpgl_analysis.UNITS_PER_MM, tweaks['dy'] / hpgl_analysis.UNITS_PER_MM))
+    events.emit('status_log', {'data': 'Plot settings: ' + ', '.join(parts) + '.'})
+    analysis = hpgl_analysis.analyze(path) if os.path.getsize(path) <= hpgl_analysis.MAX_ANALYSE_BYTES else None
+    return path, analysis
+
+
 def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_change='auto', analysis=None,
          options=None, power_on=True, keep_power=None, paper_change=False, resume_from=None, resume_job=None):
     """Run a plot. Runs in a background task; the caller must already hold plot_lock.
@@ -419,9 +575,11 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
         file_size = None
     job = history.start(os.path.basename(file), port, baudrate, flowControl, options, file_size)
     outcome, error = None, None
-    temporary = None
+    temporaries = []        # copies made for this plot, deleted afterwards
     recorder = None
     resume_start, resume_skip = 0, 0
+    checkpoints = threading.Event()
+    frame = None
     try:
         # Lock editing while printing
         socketio.emit('lock_edit', {'data': 'on'})
@@ -436,8 +594,15 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             if pens or resume_from:
                 raise ValueError('Pens cannot be picked, and a plot cannot be resumed, in a .cal file')
         else:
+            base = os.path.splitext(os.path.basename(file))[0]
             try:
                 send_path, analysis, temporary = prepare_plot_file(events, file, analysis, pens)
+                if temporary:
+                    temporaries.append(temporary)
+                changed, changed_analysis = apply_tweaks(events, send_path, base, options)
+                if changed != send_path:
+                    send_path, analysis = changed, changed_analysis
+                    temporaries.append(changed)
             except (OSError, ValueError) as e:
                 raise ValueError('Could not prepare the plot: ' + str(e))
         if resume_from:
@@ -448,17 +613,26 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
                 resume_start, resume_skip = hpgl_analysis.resume_file(send_path, resume_path, resume_from)
             except (OSError, ValueError) as e:
                 raise ValueError('Could not resume: ' + str(e))
-            if temporary:
-                os.remove(temporary)        # the copy with the chosen pens: the resume file replaces it
-            send_path, temporary = resume_path, resume_path
+            for old in temporaries:
+                remove_quietly(old)        # the copies with the chosen pens and settings: the resume file replaces them
+            send_path = resume_path
+            temporaries = [resume_path]
             analysis = hpgl_analysis.analyze(send_path)
             events.emit('status_log', {'data': 'Resuming from byte {} of the file.'.format(resume_start)})
+        elif (options or {}).get('frame_check') == 'on' and not cal:
+            if analysis is not None and analysis['bounds']:
+                frame = analysis['bounds']
+            else:
+                events.emit('status_log', {'data': 'The size of the drawing is not known, so the area is not traced first.'})
         globals.cursor_ok = not cal and os.path.abspath(send_path) == os.path.abspath(file)
         broadcast_plot_state()      # pages learn now that they can watch this plot
         if analysis is None and pen_change == 'pause':
             events.emit('status_log', {'data': 'The file is too large to analyse: no time left, no pen change pauses.'})
         if analysis is not None:
             history.set_estimate(job, analysis['seconds'])
+        if job is not None:
+            threading.Thread(target=checkpoint_loop, args=(job, checkpoints, resume_start, resume_skip),
+                             daemon=True).start()
 
         # Tasmota - switch the plotter on and give it time to start up
         if poweroff == 'on' and power_on:
@@ -477,7 +651,7 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
             result = send2serial.sendToPlotter(events, str(send_path), str(port), int(baudrate), str(flowControl),
                                                analysis=analysis, pen_pause=(pen_change == 'pause'),
                                                correction=history.correction(),
-                                               line=plotters.line_options(options))
+                                               line=plotters.line_options(options), frame=frame)
             if result is False:
                 outcome, error = 'failed', last_error()
             else:
@@ -516,21 +690,20 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
         if outcome is None:
             outcome, error = 'failed', repr(e)
     finally:
+        checkpoints.set()
         if recorder is not None:
             try:
                 finish_timelapse(events, recorder)
             except Exception:
                 traceback.print_exc()       # a timelapse must never stop a plot
+        record_pen_use(analysis, outcome)
         history.finish(job, outcome or 'failed', globals.plot_progress, error,
                        drawn_s=globals.drawn_seconds if outcome == 'completed' else None,
                        resume_offset=None if cal else resume_point(outcome, resume_start, resume_skip))
         if resume_job is not None and (outcome == 'completed' or globals.sent_offset > 0):
             history.clear_resume(resume_job)       # carried on: the old plot is not resumable again
-        if temporary:
-            try:
-                os.remove(temporary)
-            except OSError:
-                pass
+        for path in temporaries:
+            remove_quietly(path)
         if outcome == 'failed':
             plotter_name = config.get('plotter', 'name', fallback='Plotter')
             notification.send('error', '{}: {}: Failed: {}'.format(
@@ -592,7 +765,7 @@ def setup_buttons():
 
 @app.errorhandler(413)
 def too_large(e):
-    return "File is too large", 413
+    return "File is too large (at most {} MB per upload or restore)".format(app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024)), 413
 
 def pdf_import_available():
     return shutil.which(PDF_TOOL) is not None
@@ -813,7 +986,8 @@ def storage():
     except OSError:
         history_bytes = 0
     return jsonify(dict(disk, uploads=folder_size(app.config['UPLOAD_PATH']), cache=folder_size('cache'),
-                        history=history_bytes, timelapse=lapse.usage()))
+                        history=history_bytes, timelapse=lapse.usage(),
+                        max_upload=app.config['MAX_CONTENT_LENGTH']))
 
 
 # Delete the uploaded files that have not been touched for a number of days
@@ -1075,11 +1249,45 @@ def plot_request(values):
             pens = None     # every pen is wanted: plot the file as it is
             analysis = None
 
+    settings, error = plot_settings(values, cal)
+    if error:
+        return None, (error, 400)
+
     options = {'file': name, 'port': port, 'baudrate': str(baudrate), 'flowControl': flowControl,
                'tasmota': values.get('tasmota') or '', 'timelapse': 'on' if values.get('timelapse') == 'on' else '',
                'pens': pens_text, 'pen_change': pen_change}
     options.update(line)
+    options.update(settings)
     return {'name': name, 'path': path, 'options': options, 'pens': pens, 'analysis': analysis}, None
+
+
+def plot_settings(values, cal):
+    """Check the plot-time settings of a form (speed, force, acceleration, offset, frame check).
+
+    Returns (settings as strings, None), or (None, error). Empty means "as the file has it"."""
+    def clean(key, pattern, low, high, label, unit):
+        text = (values.get(key) or '').strip()
+        if text and (not pattern.fullmatch(text) or not low <= float(text) <= high):
+            return None, '{} must be {:g} to {:g}{}'.format(label, low, high, unit)
+        return text, None
+
+    settings = {}
+    for key, pattern, (low, high), label, unit in (
+            ('plot_speed', PLOT_SPEED_RE, hpgl_analysis.SPEED_RANGE, 'Pen speed', ' cm/s'),
+            ('plot_force', PLOT_FORCE_RE, hpgl_analysis.FORCE_RANGE, 'Pen force', ' g'),
+            ('plot_accel', PLOT_ACCEL_RE, hpgl_analysis.ACCEL_RANGE, 'Acceleration', ''),
+            ('offset_x', OFFSET_RE, (-hpgl_analysis.MAX_OFFSET_MM, hpgl_analysis.MAX_OFFSET_MM), 'The offset', ' mm'),
+            ('offset_y', OFFSET_RE, (-hpgl_analysis.MAX_OFFSET_MM, hpgl_analysis.MAX_OFFSET_MM), 'The offset', ' mm')):
+        settings[key], error = clean(key, pattern, low, high, label, unit)
+        if error:
+            return None, error
+    for key in ('offset_x', 'offset_y'):
+        if settings[key] and float(settings[key]) == 0:
+            settings[key] = ''
+    settings['frame_check'] = 'on' if values.get('frame_check') == 'on' else ''
+    if cal and any(settings.values()):
+        return None, 'Speed, force, acceleration, offset and the area check are for HP-GL files, not .cal files'
+    return settings, None
 
 
 def claim_plot(name):
@@ -1143,9 +1351,9 @@ MAX_REWIND = 1024 * 1024
 
 
 def can_resume(job):
-    """Can this plot carry on? It was stopped or failed part way, and the file is still the one
-    that was plotted."""
-    if job['status'] not in ('stopped', 'failed') or not job.get('resume_offset') or send2serial.is_cal(job['file']):
+    """Can this plot carry on? It was stopped or failed part way (or cut short by a power cut or a
+    restart, if a checkpoint says how far it got), and the file is still the one that was plotted."""
+    if job['status'] not in ('stopped', 'failed', 'interrupted') or not job.get('resume_offset') or send2serial.is_cal(job['file']):
         return False
     path = upload_file_path(job['file'])
     try:
@@ -1214,6 +1422,22 @@ def pause_plot():
 @app.route('/resume_plot', methods=['POST'])
 def resume_plot():
     return set_paused(False)
+
+# How far each pen has drawn since its last reset (to know when a pen is worn out)
+@app.route('/pen_usage', methods=['GET'])
+def get_pen_usage():
+    return jsonify({'pens': pen_usage.all_pens()})
+
+
+@app.route('/pen_usage/reset', methods=['POST'])
+def reset_pen_usage():
+    pen = request.form.get('pen') or ''
+    if not re.fullmatch('[0-9]{1,2}', pen):
+        return 'Invalid pen', 400
+    if not pen_usage.reset(int(pen)):
+        return 'That pen has no recorded use', 404
+    return 'Pen {} reset'.format(pen)
+
 
 # ////////////////////////////////////////////////////////////////////////////
 # Read-only status for other programs (Home Assistant, a script). Behind the same login as the page.
@@ -1440,10 +1664,21 @@ def queue_add():
     if error:
         return error
     pause_after = request.form.get('pause_after') in ('1', 'true', 'on')
-    if plot_queue.add(request_['options'], pause_after) is None:
+    copies = request.form.get('copies') or '1'
+    if not re.fullmatch('[0-9]{1,2}', copies) or not 1 <= int(copies) <= MAX_COPIES:
+        return 'Copies must be 1 to {}'.format(MAX_COPIES), 400
+    copies = int(copies)
+    if plot_queue.room() < copies:
         return 'The queue is full or cannot be saved (at most {} files)'.format(plot_queue.MAX_ITEMS), 400
+    # Every copy but the last is followed by a paper change when asked for (the last one by what the box says)
+    paper_change = request.form.get('paper_between') in ('1', 'true', 'on')
+    for number in range(copies):
+        last = number == copies - 1
+        if plot_queue.add(request_['options'], pause_after if last else paper_change) is None:
+            broadcast_queue()
+            return 'The queue is full or cannot be saved (at most {} files)'.format(plot_queue.MAX_ITEMS), 400
     broadcast_queue()
-    return 'Added to the queue'
+    return 'Added to the queue' if copies == 1 else 'Added {} copies to the queue'.format(copies)
 
 
 @app.route('/queue/remove', methods=['POST'])
@@ -1461,6 +1696,18 @@ def queue_move():
         return 'Invalid direction', 400
     if not plot_queue.move(request.form.get('id'), -1 if direction == 'up' else 1):
         return 'It cannot move that way', 409
+    broadcast_queue()
+    return 'Moved'
+
+
+# Put the waiting plots in a new order (dragging them in the list): `ids` lists every waiting plot
+@app.route('/queue/order', methods=['POST'])
+def queue_order():
+    ids = (request.form.get('ids') or '').split(',')
+    if not all(re.fullmatch('[0-9]{1,9}', i) for i in ids) or len(set(ids)) != len(ids):
+        return 'Invalid order', 400
+    if not plot_queue.reorder(ids):
+        return 'The queue changed: the list must name every waiting plot once', 409
     broadcast_queue()
     return 'Moved'
 
@@ -1663,13 +1910,20 @@ def start_conversion():
     options, error = conversion_options(request.form)
     if error:
         return error, 400
+    error = name_error(file, options)
+    if error:
+        return error, 400
 
+    if not conversion_lock.acquire(blocking=False):
+        return BUSY_CONVERTING
     try:
         output = run_conversion(file, options)
     except (Exception, SystemExit) as e:
         traceback.print_exc()
         socketio.emit('error', {'data': 'Conversion failed: ' + repr(e)})
         return 'File not converted.'
+    finally:
+        conversion_lock.release()
 
     return output
 
@@ -1696,6 +1950,14 @@ def preview_path(name):
     return path if os.path.isfile(path) else None
 
 
+# Stop the conversion that is running (the page's Cancel button while it waits)
+@app.route('/conversion/cancel', methods=['POST'])
+def cancel_conversion():
+    if not convert_runner.cancel():
+        return 'No conversion is running in a separate process', 404
+    return 'Cancelling the conversion'
+
+
 # Convert into the preview folder (not uploads/) so the result can be looked at before it is kept
 @app.route('/preview_conversion', methods=['POST'])
 def preview_conversion():
@@ -1706,14 +1968,16 @@ def preview_conversion():
     options, error = conversion_options(request.form)
     if error:
         return error, 400
+    error = name_error(file, options)
+    if error:
+        return error, 400
 
     os.makedirs(PREVIEW_DIR, exist_ok=True)
     remove_old_previews()
-    result_name = os.path.basename(output_name(
-        file, options['outputsize'], options['pageorientation'], options['device'], options['custom_comand'],
-        options['linemerge'], options['linesort'], options['linesimplify'], options['reloop'],
-        options['margin'], options['rotate'], options['mirror_x'], options['mirror_y']))
-    path = os.path.join(PREVIEW_DIR, result_name)
+    preview_name = result_name(file, options)
+    path = os.path.join(PREVIEW_DIR, preview_name)
+    if not conversion_lock.acquire(blocking=False):
+        return BUSY_CONVERTING
     try:
         if os.path.exists(path):
             os.remove(path)
@@ -1721,6 +1985,8 @@ def preview_conversion():
     except (Exception, SystemExit) as e:
         traceback.print_exc()
         socketio.emit('error', {'data': 'Conversion failed: ' + repr(e)})
+    finally:
+        conversion_lock.release()
     if not os.path.isfile(path):
         return 'File not converted.', 422
 
@@ -1728,7 +1994,7 @@ def preview_conversion():
         summary = hpgl_analysis.summary(hpgl_analysis.analyze_cached(path), history.correction())
     except OSError:
         summary = None
-    return jsonify({'name': result_name, 'summary': summary})
+    return jsonify({'name': preview_name, 'summary': summary})
 
 
 @app.route('/preview_files/<name>')
@@ -1786,13 +2052,17 @@ def create_text_drawing():
     path = upload_file_path(name)
     if path is None:
         return 'Invalid file name', 400
+    if not conversion_lock.acquire(blocking=False):
+        return BUSY_CONVERTING
     try:
-        make_text_svg(text, font, float(size), page, orientation == 'landscape', float(margin), align, output=path)
+        run_text_drawing(text, font, float(size), page, orientation == 'landscape', float(margin), align, path)
     except text_drawing.TextError as e:
         return str(e), 400
     except (Exception, SystemExit) as e:
         traceback.print_exc()
         return 'Could not create the text: ' + str(e), 500
+    finally:
+        conversion_lock.release()
     return 'Created ' + name
 
 
@@ -1849,6 +2119,11 @@ def _is_bool(value):
 def _is_seconds(value):
     return re.fullmatch(r'\d{1,3}', value) is not None and int(value) <= 600
 
+def _is_file_path(value):
+    return (_is_text(value) and len(value) <= 300 and value.startswith('/') and chr(92) not in value
+            and '..' not in value.split('/'))
+
+
 def _is_text(value):
     return len(value) <= 200 and not CONTROL_CHARS_RE.search(value)
 
@@ -1890,8 +2165,12 @@ CONFIG_FIELDS = {
     'plotter_baudrate': ('plotter', 'baudrate', valid_baudrate),
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
     'plotter_pen_change': ('plotter', 'pen_change', lambda v: v in PEN_CHANGES),
+    'convert_separate': ('plotter', 'convert_separate', _is_bool),
     # The plotter profile the page starts with (its settings are filled in on top of the ones above)
     'plotter_profile': ('plotter', 'profile', lambda v: v == '' or plotters.ID_RE.fullmatch(v) is not None),
+    # HTTPS (read when the server starts): a certificate and its key, as absolute paths
+    'server_ssl_certificate': ('server', 'ssl_certificate', lambda v: v == '' or _is_file_path(v)),
+    'server_ssl_key': ('server', 'ssl_key', lambda v: v == '' or _is_file_path(v)),
     # Basic auth needs both; HTTP basic auth cannot have a ':' in the user name
     'auth_username': ('auth', 'username', lambda v: _is_text(v) and ':' not in v),
     'auth_password': ('auth', 'password', _is_text),
@@ -1901,7 +2180,7 @@ CONFIG_FIELDS = {
 CONFIG_DEFAULTS = {'buttons_enable': 'false', 'button_start_action': 'start', 'button_stop_action': 'stop',
                    'timelapse_source': 'url', 'timelapse_interval': '10', 'timelapse_fps': '25', 'timelapse_tail': '10',
                    'timelapse_keep_frames': 'false', 'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
-                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true', 'notify_update': 'true', 'update_check': 'true',
+                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true', 'notify_update': 'true', 'update_check': 'true', 'convert_separate': 'true',
                    'notify_progress_every': '0', 'mqtt_port': '1883', 'mqtt_topic': 'webplotter'}
 
 # Never sent back to the browser: an empty password in a save means "keep the current one"
@@ -2063,7 +2342,7 @@ def restore_backup():
             try:
                 members = backup.inspect(archive)
                 updates = config_from_backup(archive) if backup.CONFIG in members else {}
-                database = backup.extract_database(archive, folder) if backup.DATABASE in members else None
+                database = backup.extract_database(archive, folder, history.SCHEMA_VERSION) if backup.DATABASE in members else None
                 profiles = backup.read_plotters(archive) if backup.PLOTTERS in members else None
                 devices = backup.read_devices(archive) if backup.DEVICES in members else None
                 if profiles is not None:
@@ -2095,6 +2374,7 @@ def restore_backup():
                 history.init()
                 plot_queue.init()
                 presets.init()
+                pen_usage.init()
                 restored['history'] = True
             for name in sorted(members):
                 match = backup.UPLOAD_NAME_RE.fullmatch(name)
@@ -2143,8 +2423,28 @@ def on_connect(auth=None):
 def connection(message):
     print('Client connected')
 
+def https_context():
+    """(certificate, key) when [server] ssl_certificate and ssl_key are set and both files can be read,
+    else None. A problem is printed rather than raised: the server then starts without HTTPS."""
+    cert, key = config_value('server', 'ssl_certificate'), config_value('server', 'ssl_key')
+    if not cert and not key:
+        return None
+    for path in (cert, key):
+        if not path or not os.path.isfile(path) or not os.access(path, os.R_OK):
+            print('HTTPS is not used: cannot read the certificate or key file ({}).'.format(path or 'not set'))
+            return None
+    return cert, key
+
+
 if __name__ == "__main__":
     setup_buttons()
     threading.Thread(target=update_loop, daemon=True).start()
+    secure = https_context()
+    if secure:
+        print('Serving over HTTPS.')
+    elif auth_configured():
+        print('Note: the login is sent in clear text over plain HTTP. Use it on a network you trust, or set up '
+              'HTTPS (see the README).')
     # use_reloader is off even in debug mode: it would restart the server mid-plot
-    socketio.run(app, host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False, allow_unsafe_werkzeug=True,
+                 **({'ssl_context': secure} if secure else {}))

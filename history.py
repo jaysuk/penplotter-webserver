@@ -20,6 +20,8 @@ FINISHED = ('completed', 'stopped', 'failed', 'interrupted')
 @contextlib.contextmanager
 def _connect():
     """A connection that commits and, unlike sqlite3's own context manager, also closes."""
+    if problem:
+        raise sqlite3.DatabaseError(problem)
     conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     try:
@@ -44,6 +46,46 @@ def _add_missing_columns(conn):
             conn.execute('ALTER TABLE jobs ADD COLUMN {} {}'.format(name, kind))
 
 
+def _migration_1(conn):
+    """The table of plots, with every column added until the schema had a version. It can run on a
+    database that already has some or all of it (from before the version was kept)."""
+    conn.execute('''CREATE TABLE IF NOT EXISTS jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL,
+        port TEXT,
+        baudrate INTEGER,
+        flow_control TEXT,
+        started_at REAL NOT NULL,
+        finished_at REAL,
+        status TEXT NOT NULL,
+        progress INTEGER DEFAULT 0,
+        error TEXT)''')
+    _add_missing_columns(conn)
+
+
+# Changes to the layout of history.db, in order. Add a function at the end to change the schema
+# (never edit an earlier one): a database remembers how many it has had (PRAGMA user_version). The
+# tables of the queue, the presets and the pen log are made by their own modules (CREATE IF NOT EXISTS).
+MIGRATIONS = (_migration_1,)
+SCHEMA_VERSION = len(MIGRATIONS)
+
+# Set when history.db was made by a newer web plotter: it is left alone rather than half used, and
+# every function here (and every module that keeps tables in it) reports a database error instead
+problem = None
+
+
+def migrate(conn):
+    """Bring a database up to date. Raises sqlite3.DatabaseError when it is from a newer version."""
+    version = conn.execute('PRAGMA user_version').fetchone()[0]
+    if version > SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            'history.db was made by a newer web plotter (schema {}, this one knows {}): update the web plotter, '
+            'or move history.db away to start a new history'.format(version, SCHEMA_VERSION))
+    for number in range(version, SCHEMA_VERSION):
+        MIGRATIONS[number](conn)
+        conn.execute('PRAGMA user_version = {}'.format(number + 1))
+
+
 @contextlib.contextmanager
 def database():
     """A locked connection, for modules that keep their own tables in history.db."""
@@ -52,24 +94,20 @@ def database():
 
 
 def init():
-    """Create the table. A plot still marked running was cut short by a restart or power loss."""
+    """Bring the database up to date. A plot still marked running was cut short by a restart or power
+    loss (a checkpoint may say how far it got, so it can be resumed)."""
+    global problem
+    problem = None
     try:
         with _lock, _connect() as conn:
-            conn.execute('''CREATE TABLE IF NOT EXISTS jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file TEXT NOT NULL,
-                port TEXT,
-                baudrate INTEGER,
-                flow_control TEXT,
-                started_at REAL NOT NULL,
-                finished_at REAL,
-                status TEXT NOT NULL,
-                progress INTEGER DEFAULT 0,
-                error TEXT)''')
-            _add_missing_columns(conn)
+            migrate(conn)
             conn.execute("UPDATE jobs SET status = 'interrupted', finished_at = ?, "
                          "error = 'The web plotter stopped while this plot was running' "
                          "WHERE status = ?", (time.time(), RUNNING))
+    except sqlite3.DatabaseError as e:
+        if 'newer web plotter' in str(e):
+            problem = str(e)
+        print('Plot history unavailable:', repr(e))
     except sqlite3.Error as e:
         print('Plot history unavailable:', repr(e))
 
@@ -104,6 +142,19 @@ def set_estimate(job, seconds):
             conn.execute('UPDATE jobs SET estimate_s = ? WHERE id = ?', (float(seconds), job))
     except (sqlite3.Error, ValueError) as e:
         print('Could not record the plot estimate:', repr(e))
+
+
+def checkpoint(job, offset):
+    """Remember how far a running plot has got, so that a plot cut short by a power cut or a restart
+    can still be resumed (`finish` replaces it with the final value)."""
+    if job is None or not offset:
+        return
+    try:
+        with _lock, _connect() as conn:
+            conn.execute('UPDATE jobs SET resume_offset = ? WHERE id = ? AND status = ?',
+                         (int(offset), job, RUNNING))
+    except (sqlite3.Error, ValueError) as e:
+        print('Could not record the plot position:', repr(e))
 
 
 def finish(job, status, progress=0, error=None, drawn_s=None, resume_offset=None):

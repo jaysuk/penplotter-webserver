@@ -23,8 +23,9 @@ This is the `PiPlot` branch of a fork. It is built for the [Pi Plot shield](http
 - Start, pause, resume and stop a plot. A refreshed page or a second device picks up a running plot with its progress and log.
 - Time left (an estimate that learns from your earlier plots), and *Watch the plot*: a cursor on the preview follows the bytes sent.
 - Multi-pen files: choose which pens to plot, and either pause at every pen change so you can swap the pen, or leave it to the plotter's carousel.
-- A *queue* of plots, with an optional paper change between them. Stop holds the queue.
-- A *plot history* with *Plot again*, and *Resume* for a plot that was stopped or failed, carrying on from where the plotter got to.
+- A *queue* of plots, with an optional paper change between them, copies of a plot, and drag and drop ordering. Stop holds the queue.
+- *Plot adjustments* for one plot: pen speed, force and acceleration, moving the drawing on the paper, and tracing the drawing's area first so you can check the paper.
+- A *plot history* with *Plot again*, and *Resume* for a plot that was stopped or failed, or cut short by a power cut or a restart, carrying on from where the plotter got to. A *pen use* log shows how far each pen has drawn, to know when it is worn out.
 - If the serial connection drops, the plot is held, the port is reopened and you choose when to continue.
 - Manual control: jog the pen, pen up and down, go to the origin, trace the plot area, read the position.
 - Auto baud rate detection.
@@ -103,17 +104,21 @@ The page is a *Console*: a header, a bar that always shows the plot (state, file
 ### Plotting a file
 
 1. Upload an SVG, or an HPGL file you already have.
-2. For an SVG, press the lightning icon on its row. Choose the plotter's device, page size and options (look at them with *Preview*), then *Convert*. This makes an HPGL file in the list, named after the options.
+2. For an SVG, press the lightning icon on its row. Choose the plotter's device, page size and options (look at them with *Preview*), then *Convert*. This makes an HPGL file in the list, named after the options. Conversions run in a separate process at a low priority, one at a time, so a plot that is running is disturbed less; *Cancel* stops one. If the Pi runs short of memory while converting, turn *Convert files in a separate process* off in the settings.
 3. Select the HPGL file. The preview draws it, with the estimated time and the pens it uses.
 4. Under *Plotter settings*, choose the port, baud rate and flow control (or a saved plotter, see below) and press *Start plot*.
+
+Open *Plot adjustments* under the plotter settings to change one plot without converting again: a pen speed (cm/s), a pen force (g), an acceleration, how far to move the drawing right and up (mm), and *Trace the drawing's area first*. The speed, force and acceleration are sent in place of the file's own (HP-GL `VS`, `FS`, `AS`), so use values your plotter's manual allows, and they have not been tried on a real plotter. The area check lifts the pen, goes round the rectangle the drawing will cover (after the offset), and waits for you to press Resume, so you can move the paper before anything is drawn. These are for this plot only and are not remembered; *Plot again* and the queue keep them. They are not for `.cal` files.
 
 Pause, resume and stop are always in the bar. Stop holds the queue: the file that was plotting stays at the top of it. With buffer flow control it also tells the plotter to drop what is in its buffer and lift the pen.
 
 ### Queue, history and resume
 
-*Add to queue* keeps the current form with a file, and *Start queue* plots them one after the other. Tick *Paper change after* to wait for you to load new paper and press Resume. While the queue runs, a plot started by hand is refused.
+*Add to queue* keeps the current form with a file, and *Start queue* plots them one after the other. Tick *Paper change after* to wait for you to load new paper and press Resume. *Copies* adds the plot to the queue that many times (with *Paper change after* ticked, there is a paper change after each copy). Drag a waiting file by its number to change the order; the arrows do the same for a touch screen or the keyboard. While the queue runs, a plot started by hand is refused.
 
-*Plot history* is kept in *history.db* next to *config.ini*, with how each plot ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). *Plot again* starts a plot with the same file and settings. A stopped or failed plot also has *Resume*, which continues it from the position the plotter had reached; without buffer feedback (XON/XOFF, none) the position is not known exactly, so you choose how far to go back.
+*Plot history* is kept in *history.db* next to *config.ini*, with how each plot ended (completed, stopped, failed, or interrupted when the server stopped mid-plot). *Plot again* starts a plot with the same file and settings. A stopped or failed plot also has *Resume*, which continues it from the position the plotter had reached; without buffer feedback (XON/XOFF, none) the position is not known exactly, so you choose how far to go back. A running plot notes where it has got to about every 30 seconds, so one that was cut short by a power cut or a restart (*interrupted*) can be resumed too: check that the paper and the pen carriage have not moved and that the plotter still has its origin, because the plotter has forgotten what was in its buffer. It resumes from the last note, so the last half minute or so may be drawn again.
+
+*Pen use* (under the history) adds up, per pen number, the length each pen has drawn. Press *New pen* after loading a fresh pen to count from zero again.
 
 ### Plotters
 
@@ -172,7 +177,7 @@ New versions are announced when `VERSION` is changed on the branch, so a release
 
 ### Status API
 
-`GET /api/status` returns the plotter, the version of the web plotter (and whether a newer one is out), its state (`idle`, `plotting`, `paused`, `pen_change`, `paper_change`, `disconnected`, `reconnect`), the plot (file, progress, time left), the queue and the last plot, as JSON for other programs (behind the login, if there is one).
+`GET /api/status` returns the plotter, the version of the web plotter (and whether a newer one is out), its state (`idle`, `plotting`, `paused`, `pen_change`, `paper_change`, `frame_check`, `disconnected`, `reconnect`), the plot (file, progress, time left), the queue and the last plot, as JSON for other programs (behind the login, if there is one).
 
 ## Security
 
@@ -186,7 +191,18 @@ password = change-me
 ```
 
 You can also set or clear the login in the web interface (settings, Login). It applies immediately, no restart needed, and the password is never sent back to the browser. If you lock yourself out, delete the `[auth]` section from *config.ini* over SSH and restart the service (`sudo systemctl restart webplotter`).
-The login uses HTTP basic auth, so use it behind HTTPS if the network is not trusted.
+The login uses HTTP basic auth, which sends the password in clear text over plain HTTP. An address that sends ten wrong passwords within five minutes is refused for five minutes.
+
+For HTTPS, make a certificate and key (this one is valid for ten years and is not signed by anyone, so the browser warns once):
+
+```bash
+mkdir -p ~/webplotter/userdata
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=webplotter" \
+  -keyout ~/webplotter/userdata/key.pem -out ~/webplotter/userdata/cert.pem
+chmod 600 ~/webplotter/userdata/key.pem
+```
+
+then give the full paths of both files in the settings dialog (*HTTPS certificate file* and *HTTPS key file*, next to the login) and restart the service. The page is then at `https://<the Pi>:5000/`; if a file cannot be read the server starts without HTTPS and says so in its log.
 
 Custom vpype commands are run by vpype, so they can only contain letters, numbers, spaces and `. _ = + -`, and cannot use `eval`, `script`, `read`, `write`, `forfile`, `include` or `show`.
 

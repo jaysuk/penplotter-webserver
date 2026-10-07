@@ -47,6 +47,8 @@ def run(app, uploads, monkeypatch):
     app.globals.paused = False
     for thread in threads:
         thread.join(2)
+    leaked = [thread for thread in threads if thread.is_alive()]
+    assert not leaked, 'a sender thread did not end: it would leak into the next test'
 
 
 def payload(port, buffered=True, queried=True):

@@ -111,6 +111,11 @@ function updateStorage(files) {
       );
       // Running low is worth a warning colour
       jQuery("#storageInfo").toggleClass("uk-text-danger", s.total !== null && s.free < 200 * 1024 * 1024);
+      // A backup with the files is restored in one upload, which has a size limit
+      const size = jQuery("#backupUploadsSize");
+      const tooBig = s.max_upload && s.uploads > s.max_upload * 0.8;
+      size.text("(" + formatBytes(s.uploads) + (tooBig ? ", too big to restore here: back the files up another way" : "") + ")");
+      size.toggleClass("uk-text-danger", !!tooBig);
     })
     .catch(function (error) {
       console.error(error);
@@ -173,6 +178,18 @@ function selectFile(element) {
   previewSelected(filename);
 }
 
+// Make a file the selected one without loading its preview again (the pens shown there must stay as they are).
+// Returns a promise that is done when its details (and so its pens) are loaded.
+function chooseFileQuietly(filename) {
+  jQuery("#fileName").val(filename);
+  jQuery("#fileList li").removeClass("is-selected");
+  jQuery("#fileList [data-filename]").filter(function () {
+    return jQuery(this).attr("data-filename") === filename;
+  }).first().parents("li").first().addClass("is-selected");
+  jQuery(".selectedFilename").text(filename);
+  return loadFileInfo(filename);
+}
+
 // What the selected file draws: size, time estimate and pens
 var fileInfoRequest = 0;
 
@@ -185,10 +202,10 @@ function clearFileInfo() {
 
 function loadFileInfo(filename) {
   clearFileInfo();
-  if (!/\.hpgl$/i.test(filename)) return;
+  if (!/\.hpgl$/i.test(filename)) return Promise.resolve();
 
   const request = ++fileInfoRequest;
-  axios
+  return axios
     .get("/analyze", { params: { file: filename } })
     .then(function (response) {
       // A newer selection has been made meanwhile
@@ -436,8 +453,7 @@ const PREVIEW_HINT = "Scroll to zoom, drag to move, double-click to fit.";
 function buildLegend() {
   const legend = jQuery("#previewLegend").empty();
   const pens = hpglViewer.penList();
-  const canChoose = pens.length > 1 && /\.hpgl$/i.test(previewedFile || "") && !previewedConversion && !watchingPlot &&
-    jQuery("#fileName").val() === previewedFile && jQuery(".penChoice").length > 0;
+  const canChoose = pens.length > 1 && /\.hpgl$/i.test(previewedFile || "") && !previewedConversion && !watchingPlot;
   jQuery("#previewUsePens").toggleClass("uk-hidden", !canChoose);
   if (pens.length === 0) return;
   for (const pen of pens) {
@@ -460,11 +476,20 @@ function usePreviewPens() {
     notify("Show at least one pen", "danger");
     return;
   }
-  jQuery(".penChoice").each(function () {
-    this.checked = shown.has(this.value);
-  });
-  updatePenSelection();
-  notify("Plotting only the pens shown", "success");
+  // The file being looked at becomes the file to plot, when it is not already
+  const apply = function () {
+    if (jQuery(".penChoice").length === 0) {
+      notify("The pens of this file are not known yet", "danger");
+      return;
+    }
+    jQuery(".penChoice").each(function () {
+      this.checked = shown.has(this.value);
+    });
+    updatePenSelection();
+    notify("Plotting " + previewedFile + " with only the pens shown", "success");
+  };
+  if (jQuery("#fileName").val() === previewedFile && jQuery(".penChoice").length > 0) apply();
+  else chooseFileQuietly(previewedFile).then(apply);
 }
 
 // Replay
@@ -1201,6 +1226,7 @@ var currentPlotFile = null;
 
 function applyPlotState(state) {
   updateTransport(state);
+  jQuery("#convertPlotWarning").toggleClass("uk-hidden", !state.running);
   currentPlotFile = state.running && state.cursor_ok ? state.file : null;
   jQuery(".watchPlot").toggleClass("uk-hidden", !currentPlotFile);
   jQuery(".pausePlot").toggleClass("uk-hidden", !!state.paused);
@@ -1256,6 +1282,7 @@ const STATE_LABELS = {
   paper_change: "Paper change",
   disconnected: "Disconnected",
   reconnect: "Plotter is back",
+  frame_check: "Check the paper",
 };
 
 function plotStateName(state) {
@@ -1321,6 +1348,12 @@ const WAIT_NOTICES = {
     resume: "Resume",
     stop: "Stop plot",
   },
+  frame_check: {
+    title: "Check the paper",
+    text: () => "The pen has gone round the area the drawing will cover. Look at where it went (the pen is up, nothing is drawn yet), move the paper if needed, then press Resume to start drawing.",
+    resume: "Start drawing",
+    stop: "Cancel plot",
+  },
   paper_change: {
     title: "Change the paper",
     text: () => "Take out the finished sheet and load the next one, then press Resume to plot the next file in the queue.",
@@ -1350,11 +1383,15 @@ function addToQueue() {
   const data = plotFormData();
   if (data === null) return;
   const form = new URLSearchParams(data);
-  form.set("pause_after", jQuery("#queuePause").is(":checked") ? "1" : "");
+  const paper = jQuery("#queuePause").is(":checked") ? "1" : "";
+  form.set("pause_after", paper);
+  form.set("paper_between", paper);
+  const copies = Math.max(1, Math.min(20, parseInt(jQuery("#queueCopies").val(), 10) || 1));
+  form.set("copies", String(copies));
   axios
     .post("/queue/add", form)
-    .then(function () {
-      notify("Added to the queue", "success");
+    .then(function (response) {
+      notify(response.data, "success");
     })
     .catch(function (error) {
       notify(errorMessage(error), "danger");
@@ -1382,6 +1419,7 @@ function clearQueue() {
 // Draw the queue (sent by the server whenever it changes, and when a page connects)
 function renderQueue(queue) {
   const list = jQuery("#queueList").empty();
+  queueOrderSent = queue.items.filter(function (item) { return item.status !== "running"; }).map(function (item) { return String(item.id); }).join(",");
   jQuery("#queueEmpty").toggleClass("uk-hidden", queue.items.length > 0);
   jQuery("#queueMessage").text(queue.message || "");
   jQuery(".startQueue").prop("disabled", queue.active || queue.items.length === 0);
@@ -1389,7 +1427,10 @@ function renderQueue(queue) {
     const id = Number(item.id);
     const running = item.status === "running";
     const row = jQuery("<li>").toggleClass("is-running", running).toggleClass("uk-text-muted", !running && queue.active);
-    row.append(jQuery("<span class='ftype num'>").text(index + 1));
+    row.toggleClass("is-waiting", !running).attr("data-id", id);
+    const number = jQuery("<span class='ftype num'>").text(index + 1);
+    if (!running) number.addClass("q-grip").attr("title", "Drag to change the order");
+    row.append(number);
     const name = jQuery("<div class='q-name'>").append(jQuery("<span>").text(item.file));
     if (item.pens) name.append(jQuery("<span class='uk-text-small uk-text-muted'>").text(" (pens " + item.pens + ")"));
     row.append(name);
@@ -1407,6 +1448,26 @@ function renderQueue(queue) {
       );
     }
     list.append(row);
+  });
+}
+
+// Dragging the waiting files into a new order (UIkit's sortable; the arrows stay for touch screens and keyboards)
+function waitingQueueIds() {
+  return jQuery("#queueList li.is-waiting").map(function () { return jQuery(this).attr("data-id"); }).get();
+}
+
+var queueOrderSent = "";
+
+function setupQueueSort() {
+  const list = document.getElementById("queueList");
+  if (!list || !window.UIkit || !UIkit.sortable) return;
+  UIkit.sortable(list, { handle: ".q-grip", animation: 150, threshold: 6 });
+  UIkit.util.on(list, "stop", function () {
+    const ids = waitingQueueIds().join(",");
+    if (!ids || ids === queueOrderSent) return;
+    queueAction("order", { ids: ids }).then(function (response) {
+      if (!response) updateQueue(); // refused (the queue changed meanwhile): show what it is now
+    });
   });
 }
 
@@ -1512,7 +1573,8 @@ function historyActions(job) {
     const buffered = job.flow_control == "CTS/RTS" || job.flow_control == "Software";
     buttons +=
       `<a href="#" class="uk-button uk-button-default uk-button-small resumeJob" data-job="${id}" ` +
-      `data-buffered="${buffered ? 1 : 0}" title="Carry on from where this plot got to">Resume</a>`;
+      `data-buffered="${buffered ? 1 : 0}" data-interrupted="${job.status == "interrupted" ? 1 : 0}" ` +
+      `title="Carry on from where this plot got to">Resume</a>`;
   }
   if (job.can_replot) {
     buttons +=
@@ -1524,9 +1586,12 @@ function historyActions(job) {
 
 // Resume a stopped plot: the pen carriage and paper must not have moved, and the plotter may
 // have a few commands in its buffer that never got drawn, so offer to go back a little
-function askResume(id, buffered) {
+function askResume(id, buffered, interrupted) {
   jQuery("#resumeJobId").val(id);
-  jQuery("#resumeRewind").val(buffered ? "0" : "1024");
+  // After a power cut or a restart the position is the last one noted (about every 30 s) and the
+  // plotter lost what was in its buffer: go back further
+  jQuery("#resumeRewind").val(interrupted ? "4096" : buffered ? "0" : "1024");
+  jQuery("#resumeInterrupted").toggleClass("uk-hidden", !interrupted);
   UIkit.modal("#modal-resume").show();
 }
 
@@ -1551,7 +1616,43 @@ function replotJob(id) {
     });
 }
 
+// How far each pen has drawn since it was last replaced
+function updatePenUsage() {
+  return axios
+    .get("/pen_usage")
+    .then(function (response) {
+      const rows = jQuery("#penUsageList").empty();
+      const pens = response.data.pens;
+      jQuery("#penUsageEmpty").toggleClass("uk-hidden", pens.length > 0);
+      for (const pen of pens) {
+        const row = jQuery("<tr>");
+        row.append(jQuery("<td>").text("Pen " + Number(pen.pen)));
+        row.append(jQuery("<td class='num'>").text((Number(pen.mm) / 1000).toFixed(1) + " m"));
+        row.append(jQuery("<td>").text(Number(pen.plots) + (Number(pen.plots) == 1 ? " plot" : " plots") + " since " + new Date(pen.since * 1000).toLocaleDateString()));
+        row.append(
+          jQuery("<td>").append(
+            jQuery("<a href='#' class='uk-button uk-button-default uk-button-small resetPen' title='A new pen was loaded: count again from zero'>New pen</a>").attr("data-pen", Number(pen.pen))
+          )
+        );
+        rows.append(row);
+      }
+    })
+    .catch(function (error) {
+      console.error(error);
+    });
+}
+
+function resetPen(pen) {
+  axios
+    .post("/pen_usage/reset", new URLSearchParams({ pen: pen }))
+    .then(updatePenUsage)
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
 function updateHistory() {
+  updatePenUsage();
   return axios
     .get("/job_history")
     .then(function (response) {
@@ -1788,7 +1889,8 @@ function actionTasmota() {
 // What the forms were set to is kept on the server (userdata/ui_state.json), so a reload or another device shows the
 // same values. The file, the chosen pens and the typed text are not part of it.
 const UI_STATE_FORMS = { plotter: "#plotterData", convert: "#convertData", text: "#textData" };
-const UI_STATE_SKIP = { plotter: ["file", "pens"], convert: ["file"], text: ["text"] };
+// The plot adjustments are for one plot: a speed or an offset that came back by itself would be a surprise
+const UI_STATE_SKIP = { plotter: ["file", "pens", "plot_speed", "plot_force", "plot_accel", "offset_x", "offset_y", "frame_check"], convert: ["file"], text: ["text"] };
 var uiStateReady = false; // nothing is saved before the saved values have been put back
 var uiStateRestoring = false;
 var uiStateTimer = null;
@@ -1941,7 +2043,7 @@ function updateConfiguration() {
 // The notification settings that are plain fields in the config modal
 const NOTIFICATION_FIELDS = [
   "notify_start", "notify_finish", "notify_error", "notify_pen_change", "notify_progress_every",
-  "notify_update", "update_check",
+  "notify_update", "update_check", "convert_separate",
   "webhook_url", "mqtt_host", "mqtt_port", "mqtt_topic", "mqtt_username",
 ];
 

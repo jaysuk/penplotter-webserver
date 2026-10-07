@@ -45,7 +45,12 @@ jobs:
 
         commands: |
             echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-            apt-get update && apt-get install -qq -y git curl wget > /dev/null
+            # The Raspbian mirror is sometimes down for a moment (apt exit 100): try again a few times
+            for attempt in 1 2 3 4; do
+                apt-get update && apt-get install -qq -y git curl wget > /dev/null && break
+                [ "$attempt" = 4 ] && { echo "apt did not work after $attempt tries"; exit 1; }
+                echo "apt failed (try $attempt), waiting before the next one"; sleep 20
+            done
 
             # Install the commit that is being tested, and do not reboot at the end
             export WEBPLOTTER_REPO="https://github.com/${{ github.repository }}.git"
@@ -83,6 +88,11 @@ jobs:
                     Exported*) ;;
                     *) echo "Conversion failed"; cat "$HOME/server.log"; kill $server_pid; exit 1 ;;
                 esac
+
+                # The jobs prove the packages install, not that they import: say so when one does not
+                "$HOME/penplotter_venv/bin/python3" -c 'import paho.mqtt.publish, gpiozero, serial, flask_socketio, requests'                     || echo "::warning::A package of requirements.txt cannot be imported"
+                # The history database was brought up to date (schema version, pen log table)
+                curl -sf http://localhost:5000/pen_usage > /dev/null || { echo "The pen log does not work"; cat "$HOME/server.log"; kill $server_pid; exit 1; }
 
                 kill $server_pid
                 wait $server_pid 2>/dev/null || true

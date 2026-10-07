@@ -9,6 +9,7 @@ from serial import SerialException
 import notification
 import globals
 import hpgl_analysis
+import plotter_control
 # Shared, live configuration object (updated when settings are saved in the UI)
 from config import config
 
@@ -418,12 +419,15 @@ def reconnect(socketio, notify_name, reason, tty, port, baud, flowControl, use_b
     return new_tty, bufsz, offset, preamble
 
 
-def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0, line=None):
+def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pen_pause=False, correction=1.0, line=None,
+                  frame=None):
     """Stream an HPGL file to the plotter. Returns True if the plot finished or was stopped.
 
     `analysis` (from hpgl_analysis) gives the time left. With `pen_pause` the plot also holds
     back at every pen change until it is resumed, so the pen can be swapped by hand. `line` holds the
-    serial line options (see open_port)."""
+    serial line options (see open_port). With `frame` (the drawing's [minx, miny, maxx, maxy] in plotter
+    units) the pen, lifted, first goes round that rectangle and the plot waits for Resume, so the
+    paper can be checked before anything is drawn."""
 
     PLOTTER_NAME = config.get('plotter', 'name', fallback='Plotter')
     notify_name = PLOTTER_NAME.replace(' ', '-')
@@ -488,6 +492,10 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
         paused_since = None
         paused_time = 0.0
         pending = b''           # set-up commands to send before the file carries on (after a reconnect)
+        frame_hold = False      # the area is being traced: wait for Resume once that is sent
+        if frame and not cal:
+            pending = b''.join(plotter_control.trace_bounds(frame))
+            frame_hold = True
         last_len = 0            # size of the chunk written last
         last_stop = 0           # offset of the last pen change that was passed
 
@@ -542,6 +550,17 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                 if paused_since is not None:
                     paused_time += time.time() - paused_since
                     paused_since = None
+
+                if frame_hold and not pending:
+                    frame_hold = False
+                    globals.wait_reason = 'frame_check'
+                    globals.paused = True
+                    socketio.emit('status_log', {'data': 'The pen has gone round the area the drawing will cover. '
+                                                         'Check the paper, then press Resume to start drawing.'})
+                    socketio.emit('wait_change', {'data': {'reason': 'frame_check'}})
+                    notification.send('attention', '{}: {}: Check the paper, then press Resume'.format(
+                        notify_name, globals.current_file), file=globals.current_file)
+                    continue
 
                 if pen_stops and total_bytes_written >= pen_stops[0][0]:
                     last_stop, pen = pen_stops.popleft()

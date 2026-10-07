@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from test_routes import PLOT, slow_plot, wait_for      # noqa: F401  (slow_plot is a fixture)
+from test_routes import PLOT, slow_plot, wait_for, wait_until_plotting      # noqa: F401  (slow_plot is a fixture)
 
 
 class FakeButton:
@@ -126,7 +126,7 @@ def test_the_pause_action_toggles(app, client, uploads, slow_plot, gpio):
     app.main.setup_buttons()
     (uploads / 'a.hpgl').write_text('IN;')
     client.post('/start_plot', data=PLOT)
-    assert wait_for(lambda: app.main.plot_lock.locked())
+    assert wait_until_plotting(app)
     pressed(app, 'start')
     assert app.globals.paused
     pressed(app, 'start')

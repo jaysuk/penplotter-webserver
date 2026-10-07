@@ -231,6 +231,11 @@
               </table>
               <p id="historyEmpty" class="cs-note uk-hidden">No plots yet.</p>
             </div>
+            <h3 class="uk-text-small uk-text-bold uk-margin-small-top uk-margin-remove-bottom">Pen use</h3>
+            <table class="uk-table uk-table-small uk-table-divider uk-margin-remove-top">
+              <tbody id="penUsageList"></tbody>
+            </table>
+            <p id="penUsageEmpty" class="cs-note">Nothing drawn yet. Each completed or stopped plot adds what it drew with each pen number; press New pen after loading a fresh one.</p>
           </div>
         </section>
         <!-- /History -->
@@ -418,6 +423,39 @@
                   </details>
                 </div>
 
+                <div class="uk-width-1-1">
+                  <details class="cs-line" id="plotAdjust">
+                    <summary>Plot adjustments</summary>
+                    <p class="cs-note uk-margin-small-top uk-margin-small-bottom">For this plot only, and not remembered. Leave a
+                      field empty to keep what the file says. Speed, force and acceleration are sent to the plotter in place
+                      of the file's own (HP-GL VS, FS and AS), so use values your plotter's manual allows. The offset moves
+                      the whole drawing on the paper (right and up). Not for .cal files.</p>
+                    <div class="uk-grid uk-grid-small uk-child-width-1-2 uk-child-width-1-3@m" data-uk-grid>
+                      <div>
+                        <label class="uk-form-label" for="plotSpeed">Pen speed (cm/s)</label>
+                        <input id="plotSpeed" class="uk-input uk-form-small" name="plot_speed" type="text" inputmode="decimal" placeholder="As the file">
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="plotForce">Pen force (g)</label>
+                        <input id="plotForce" class="uk-input uk-form-small" name="plot_force" type="text" inputmode="numeric" placeholder="As the file">
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="plotAccel">Acceleration</label>
+                        <input id="plotAccel" class="uk-input uk-form-small" name="plot_accel" type="text" inputmode="numeric" placeholder="As the file">
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="offsetX">Move right (mm)</label>
+                        <input id="offsetX" class="uk-input uk-form-small" name="offset_x" type="text" inputmode="decimal" placeholder="0">
+                      </div>
+                      <div>
+                        <label class="uk-form-label" for="offsetY">Move up (mm)</label>
+                        <input id="offsetY" class="uk-input uk-form-small" name="offset_y" type="text" inputmode="decimal" placeholder="0">
+                      </div>
+                    </div>
+                    <label class="uk-text-small uk-display-block uk-margin-small-top"><input id="frameCheck" class="uk-checkbox" type="checkbox" name="frame_check"> Trace the drawing's area first (pen up), then wait for Resume</label>
+                  </details>
+                </div>
+
                 <input id="plotPens" name="pens" type="hidden">
                 <div id="fileInfo" class="uk-width-1-1 uk-hidden">
                   <div class="uk-alert uk-alert-primary uk-margin-remove">
@@ -447,6 +485,10 @@
                 </div>
                 <div class="uk-width-1-1 uk-width-auto@s">
                   <label class="uk-text-small"><input id="queuePause" class="uk-checkbox" type="checkbox"> Paper change after</label>
+                </div>
+                <div class="uk-width-1-1 uk-width-auto@s">
+                  <label class="uk-text-small" for="queueCopies">Copies</label>
+                  <input id="queueCopies" class="uk-input uk-form-small uk-form-width-xsmall" type="number" min="1" max="20" value="1" title="Add this plot to the queue several times">
                 </div>
               </div>
             </div>
@@ -597,6 +639,9 @@
                 <img src="{{url_for('static', filename='img/banner.png')}}" width="400" alt=""></img>
               </div>
               <span uk-spinner="ratio: 2"></span>
+              <div>
+                <button class="uk-button uk-button-default uk-button-small cancelConversion" type="button">Cancel</button>
+              </div>
             </div>
           </div>
           <div class="uk-width-expand uk-text-right panel-icons">
@@ -606,6 +651,9 @@
         </div>
       </div>
       <div class="uk-modal-body">
+        <p id="convertPlotWarning" class="uk-text-small uk-text-warning uk-margin-small uk-hidden">A plot is running. Converting
+          uses the Pi's processor and can slow the plot down a little (and Stop may take a moment longer to act). It is safer to
+          wait until the plot has finished. One conversion runs at a time.</p>
         <form id="convertData">
           <fieldset class="uk-fieldset uk-grid-small" uk-grid>
 
@@ -961,6 +1009,15 @@
                 </select>
               </div>
             </div>
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="convert_separate">Convert files in a separate process (a plot running meanwhile is disturbed less; uses more memory)</label>
+              <div class="uk-margin-small">
+                <select id="convert_separate" class="uk-select" name="convert_separate">
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
 
             <div class="uk-width-1-1">
               <h5 class="uk-margin-remove">Webhook and MQTT</h5>
@@ -1192,6 +1249,24 @@
                 <input id="auth_password" class="uk-input" name="auth_password" type="password" autocomplete="new-password">
               </div>
             </div>
+
+            <div class="uk-width-1-1">
+              <p class="uk-text-small uk-text-muted uk-margin-remove">The login travels in clear text over plain HTTP, so it only keeps out people who cannot watch your network. For HTTPS give a certificate and its key (full paths, for example made with the openssl command in the README). Wrong passwords are counted: an address that sends ten within five minutes is refused for five minutes. The certificate is read when the server starts, so restart the service after changing it.</p>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="server_ssl_certificate">HTTPS certificate file</label>
+              <div class="uk-margin-small">
+                <input id="server_ssl_certificate" class="uk-input" name="server_ssl_certificate" type="text" placeholder="/home/pi/webplotter/userdata/cert.pem" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="uk-width-1-2@s">
+              <label class="uk-form-label" for="server_ssl_key">HTTPS key file</label>
+              <div class="uk-margin-small">
+                <input id="server_ssl_key" class="uk-input" name="server_ssl_key" type="text" placeholder="/home/pi/webplotter/userdata/key.pem" autocomplete="off">
+              </div>
+            </div>
           </fieldset>
           <div class="uk-margin-medium-top">
             <label class="uk-form-label" for="themeChoice">Appearance (this browser only)</label>
@@ -1221,7 +1296,7 @@
         <hr>
         <h5 class="uk-margin-remove">Backup</h5>
         <p class="uk-text-small uk-text-muted uk-margin-remove">A zip with the settings, your plotters, the plot history, the presets and the queue. It includes the passwords in config.ini, so keep it private.</p>
-        <label class="uk-text-small"><input id="backupUploads" class="uk-checkbox" type="checkbox"> Include the uploaded files</label>
+        <label class="uk-text-small"><input id="backupUploads" class="uk-checkbox" type="checkbox"> Include the uploaded files <span id="backupUploadsSize"></span></label>
         <button class="uk-button uk-button-default uk-button-small uk-margin-small-left downloadBackup" type="button">Download backup</button>
         <div class="uk-margin-small-top">
           <input id="restoreFile" type="file" accept=".zip,application/zip">
@@ -1439,6 +1514,10 @@
         moved since it stopped, and the same pen is loaded.</p>
       <p class="uk-text-small">Plotters without buffer feedback may have had a little left to draw when the plot
         stopped. Going back a little draws the last part again instead of leaving a gap.</p>
+      <p id="resumeInterrupted" class="uk-text-small uk-text-warning uk-hidden">This plot was cut short by a power cut or
+        a restart. The place it carries on from was noted about every 30 seconds, and the plotter may have moved
+        the paper or the pen carriage, or forgotten where its origin is: check them and the loaded pen first.
+        The plot may be drawn again from a little before where it stopped.</p>
       <input type="hidden" id="resumeJobId">
       <label class="uk-form-label" for="resumeRewind">Go back</label>
       <select id="resumeRewind" class="uk-select">
@@ -1942,6 +2021,20 @@
         clearQueue();
       });
 
+      setupQueueSort();
+
+      jQuery(document).on('click', '.cancelConversion', function (e) {
+        e.preventDefault();
+        axios.post('/conversion/cancel').catch(function (error) {
+          notify(errorMessage(error), 'danger');
+        });
+      });
+
+      jQuery(document).on('click', '.resetPen', function (e) {
+        e.preventDefault();
+        resetPen(jQuery(this).attr('data-pen'));
+      });
+
       jQuery(document).on('click', '.queueRemove', function (e) {
         e.preventDefault();
         queueAction('remove', { id: jQuery(this).data('id') });
@@ -2020,7 +2113,7 @@
 
       jQuery(document).on('click', '.resumeJob', function (e) {
         e.preventDefault();
-        askResume(jQuery(this).data('job'), jQuery(this).data('buffered') == 1);
+        askResume(jQuery(this).data('job'), jQuery(this).data('buffered') == 1, jQuery(this).data('interrupted') == 1);
       });
 
       jQuery(document).on('click', '.confirmResume', function (e) {

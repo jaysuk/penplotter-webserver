@@ -4,6 +4,23 @@ Newest first. Users see the entries they have not read yet the next time they op
 
 To make a release: add an entry here, raise `VERSION` to the same number, and commit them together. Entries are `## <version> - <date>` with optional `### <group>` headings and `- ` bullets; the page shows plain text only.
 
+## 1.1.0 - 2026-10-07
+
+### Added
+- Plot adjustments for one plot: pen speed, force and acceleration, moving the drawing on the paper, and tracing the drawing's area first so you can check the paper before anything is drawn.
+- Copies: add a plot to the queue several times at once. Drag the waiting files of the queue into a new order.
+- A plot that a power cut or a restart cut short can now be resumed from the history, from the last place noted (about every 30 seconds).
+- Pen use: how far each pen has drawn, with a New pen button, to know when a pen is worn out.
+- Optional HTTPS (a certificate and key in the settings), and an address that sends too many wrong passwords is refused for a while.
+- "Plot only the pens shown" in the preview now also works for a file that is not the selected one.
+- The backup dialog shows how big the uploaded files are.
+
+### Changed
+- Files are converted in a separate process at a low priority, so a plot that is running is disturbed much less, and a Cancel button stops a conversion that is taking too long. A setting in the configuration turns this off if the Pi runs short of memory.
+- Only one conversion runs at a time, and the convert dialog warns while a plot is running.
+- A conversion whose file name would be too long for the file system is refused with a clear message.
+- The history database keeps a version number, so later changes to it are applied once and in order. A database or backup made by a newer web plotter is left alone instead of being half used.
+
 ## 1.0.0 - 2026-10-06
 
 The first numbered release.

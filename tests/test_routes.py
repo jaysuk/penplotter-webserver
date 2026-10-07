@@ -19,6 +19,12 @@ def wait_for(condition, timeout=3.0):
     return False
 
 
+def wait_until_plotting(app, timeout=3.0):
+    """The sender is running: the plot lock is taken a moment before it starts, and a Stop in between is
+    a different case from a Stop during the plot."""
+    return wait_for(lambda: app.main.plot_lock.locked() and app.globals.printing, timeout)
+
+
 @pytest.fixture
 def slow_plot(app, monkeypatch):
     """Replace the real plotting with one that runs until released, like a long plot."""
@@ -187,7 +193,7 @@ def test_plot_rejects_bad_input(client, uploads):
 def test_plot_lifecycle(app, client, uploads, slow_plot):
     (uploads / 'a.hpgl').write_text('IN;')
     assert client.post('/start_plot', data=PLOT).data == b'Plot started'
-    assert wait_for(lambda: app.main.plot_lock.locked())
+    assert wait_until_plotting(app)
 
     assert client.post('/start_plot', data=PLOT).status_code == 409           # one plot at a time
     assert client.post('/delete_file', json={'filename': 'a.hpgl'}).status_code == 409
