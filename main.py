@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
-from flask import Flask, Response, render_template, request, send_from_directory, jsonify
+from flask import Flask, Response, has_request_context, render_template, request, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 
@@ -33,6 +33,7 @@ import hpgl_analysis
 import notification
 import pen_usage
 import plot_queue
+import plotlog
 import plotter_control
 import plotters
 import presets
@@ -357,9 +358,18 @@ class PlotEvents:
 
     def emit(self, name, data=None, **kwargs):
         globals.record_event(name, data)
+        if name in ('status_log', 'error'):
+            plotlog.log('{}: {}'.format('ERROR' if name == 'error' else 'log', data.get('data') if isinstance(data, dict) else data))
         socketio.emit(name, data, **kwargs)
         if name in ('pen_change', 'wait_change'):
             broadcast_plot_state()      # the sender paused the plot: tell every page
+
+
+def requested_by():
+    """Who asked for something, for the plot log: a page (its address) or a button of the Pi Plot shield."""
+    if has_request_context():
+        return 'the page at {}'.format(request.remote_addr or 'an unknown address')
+    return 'a button of the Pi Plot shield'
 
 
 def plot_state():
@@ -574,6 +584,9 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
     except OSError:
         file_size = None
     job = history.start(os.path.basename(file), port, baudrate, flowControl, options, file_size)
+    plotlog.log('Plot {} started: {}{}{}'.format(
+        job if job is not None else '-', os.path.basename(file),
+        ', pens ' + str(pens) if pens else '', ', resuming from byte {}'.format(resume_from) if resume_from else ''))
     outcome, error = None, None
     temporaries = []        # copies made for this plot, deleted afterwards
     recorder = None
@@ -686,10 +699,13 @@ def plot(file, port, baudrate, flowControl, poweroff, timelapse, pens=None, pen_
                          stoppable=True)
     except Exception as e:
         traceback.print_exc()
+        plotlog.log('Plot failed with an exception: ' + traceback.format_exc())
         events.emit('error', {'data': 'Plot failed: ' + repr(e)})
         if outcome is None:
             outcome, error = 'failed', repr(e)
     finally:
+        plotlog.log('Plot {} ended: {}{}'.format(job if job is not None else '-', outcome or 'failed',
+                                                  ' ({})'.format(error) if error else ''))
         checkpoints.set()
         if recorder is not None:
             try:
@@ -1377,6 +1393,22 @@ def resume_job():
     offset = max(job['resume_offset'] - int(rewind), 0)
     return begin_plot(job_values(job), resume_from=offset, resume_job=job['id'])
 
+# The plot log (plotlog.py): a text file of what the sender did, to find out why a plot stopped
+@app.route('/plot_log', methods=['GET'])
+def get_plot_log():
+    if request.args.get('download') == '1':
+        return Response(plotlog.everything() + '\n', mimetype='text/plain', headers={
+            'Content-Disposition': time.strftime('attachment; filename="webplotter-plot-log-%Y%m%d-%H%M.txt"')})
+    return Response(plotlog.tail(request.args.get('lines')), mimetype='text/plain')
+
+
+@app.route('/plot_log/clear', methods=['POST'])
+def clear_plot_log():
+    if not plotlog.clear():
+        return 'The log could not be deleted', 500
+    return 'Log cleared'
+
+
 # Stop the printing process
 @app.route('/stop_plot', methods=['POST'])
 def stop_plot():
@@ -1387,6 +1419,8 @@ def stop_plot():
         socketio.emit('lock_edit', {'data': 'off'})
         return 'The queue will stop' if globals.queue_active else 'No plot is running'
 
+    plotlog.log('Stop requested by {} (sent {} bytes so far{})'.format(
+        requested_by(), globals.sent_offset, ', already finished: only waiting' if globals.plot_finished else ''))
     globals.stop_requested = True
     globals.printing = False
     globals.clear_wait()     # a paused plot must wake up to notice the stop
@@ -1404,6 +1438,7 @@ def set_paused(paused):
     if not paused and globals.paused and globals.wait_reason == 'disconnected':
         return 'The plotter is not connected yet', 409
     if globals.paused != paused:
+        plotlog.log('{} requested by {}'.format('Pause' if paused else 'Resume', requested_by()))
         if paused:
             globals.paused = True
         else:
@@ -2166,6 +2201,8 @@ CONFIG_FIELDS = {
     'plotter_flowControl': ('plotter', 'flowControl', lambda v: v in FLOW_CONTROLS),
     'plotter_pen_change': ('plotter', 'pen_change', lambda v: v in PEN_CHANGES),
     'convert_separate': ('plotter', 'convert_separate', _is_bool),
+    # Bytes of the file per write to the serial port; 0 or empty = the sender decides
+    'plotter_chunk_size': ('plotter', 'chunk_size', lambda v: v == '' or (re.fullmatch(r'[0-9]{1,4}', v) is not None and int(v) <= send2serial.CHUNK_MAX)),
     # The plotter profile the page starts with (its settings are filled in on top of the ones above)
     'plotter_profile': ('plotter', 'profile', lambda v: v == '' or plotters.ID_RE.fullmatch(v) is not None),
     # HTTPS (read when the server starts): a certificate and its key, as absolute paths
@@ -2180,7 +2217,7 @@ CONFIG_FIELDS = {
 CONFIG_DEFAULTS = {'buttons_enable': 'false', 'button_start_action': 'start', 'button_stop_action': 'stop',
                    'timelapse_source': 'url', 'timelapse_interval': '10', 'timelapse_fps': '25', 'timelapse_tail': '10',
                    'timelapse_keep_frames': 'false', 'tasmota_on_delay': '2', 'tasmota_off_delay': '30', 'notify_start': 'true',
-                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true', 'notify_update': 'true', 'update_check': 'true', 'convert_separate': 'true',
+                   'notify_finish': 'true', 'notify_error': 'true', 'notify_pen_change': 'true', 'notify_update': 'true', 'update_check': 'true', 'convert_separate': 'true', 'plotter_chunk_size': '0',
                    'notify_progress_every': '0', 'mqtt_port': '1883', 'mqtt_topic': 'webplotter'}
 
 # Never sent back to the browser: an empty password in a save means "keep the current one"
@@ -2437,6 +2474,7 @@ def https_context():
 
 
 if __name__ == "__main__":
+    plotlog.log('Server started, version {}'.format(updater.current_version()))
     setup_buttons()
     threading.Thread(target=update_loop, daemon=True).start()
     secure = https_context()

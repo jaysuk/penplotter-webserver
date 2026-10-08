@@ -4,6 +4,12 @@ Newest first. Users see the entries they have not read yet the next time they op
 
 To make a release: add an entry here, raise `VERSION` to the same number, and commit them together. Entries are `## <version> - <date>` with optional `### <group>` headings and `- ` bullets; the page shows plain text only.
 
+## 1.2.0 - 2026-10-08
+
+### Added
+- A plot log: a text file that keeps what the plotter software did, to find out why a plot stopped by itself. It records starts and stops (and who asked: a page, or a button of the Pi Plot shield), pauses, errors, times when the plotter stopped taking data, and a line every 30 seconds while plotting. Open it from the Plot log button in the System panel; you can download or clear it. It is kept after a restart.
+- A setting for how many bytes are sent to the serial port at a time (0 = automatic, as before). With CTS/RTS or Software flow control it is held to half of the plotter's buffer.
+
 ## 1.1.0 - 2026-10-07
 
 ### Added

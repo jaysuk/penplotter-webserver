@@ -600,6 +600,7 @@
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionTasmota"><span data-uk-icon="icon: bolt" class="uk-margin-small-right"></span>Toggle Tasmota</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 actionOpenConfig"><span data-uk-icon="icon: settings" class="uk-margin-small-right"></span>Edit config file</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 openTimelapses"><span data-uk-icon="icon: video-camera" class="uk-margin-small-right"></span>Timelapses</a>
+            <a href="#" class="uk-button uk-button-default uk-width-1-1 openPlotLog"><span data-uk-icon="icon: file-text" class="uk-margin-small-right"></span>Plot log</a>
             <a href="#" class="uk-button uk-button-default uk-width-1-1 openUpdate" uk-toggle="target: #modal-update"><span data-uk-icon="icon: download" class="uk-margin-small-right"></span>Version <span class="versionText">-</span></a>
             <div class="uk-grid-small uk-child-width-1-2" data-uk-grid>
               <div><a href="#" class="uk-button uk-button-default uk-width-1-1" uk-toggle="target: #modal-reboot"><span data-uk-icon="icon: refresh" class="uk-margin-small-right"></span>Reboot Pi</a></div>
@@ -923,6 +924,16 @@
                   <option value="pause">Pause for a manual pen change</option>
                 </select>
               </div>
+            </div>
+
+            <div class="uk-width-1-1">
+              <label class="uk-form-label" for="plotter_chunk_size">Bytes per write to the serial port (0 = automatic)</label>
+              <div class="uk-margin-small">
+                <input id="plotter_chunk_size" class="uk-input" name="plotter_chunk_size" type="number" inputmode="numeric" min="0" max="1024" step="1">
+              </div>
+              <p class="cs-note uk-margin-remove">Automatic sends 30 bytes at a time (10 for a plotter with a very small buffer). A smaller number is gentler
+                on a plotter that loses characters; a larger one is smoother on a plotter that handshakes. With CTS/RTS or Software flow control it
+                is held to half of the plotter's buffer. Applies from the next plot.</p>
             </div>
 
             <div class="uk-width-1-1">
@@ -1593,6 +1604,22 @@
   </div>
   <!-- update modal -->
 
+  <!-- plot log: what the sender did, kept on disk, to find out why a plot stopped -->
+  <div id="modal-plotlog" uk-modal>
+    <div class="uk-modal-dialog uk-modal-body">
+      <h2 class="uk-modal-title">Plot log</h2>
+      <p class="cs-note uk-margin-remove-top">Starts, stops (and who asked for them), pauses, errors, stalls where the plotter stopped taking data, and a line every 30 seconds while plotting. The last line before a gap tells when the plot or the Pi stopped. It is kept after a restart.</p>
+      <pre id="plotLogText" class="cs-note" style="white-space: pre-wrap; word-break: break-all; max-height: 50vh; overflow: auto"></pre>
+      <p class="uk-text-right">
+        <button class="uk-button uk-button-default clearPlotLog" type="button">Clear</button>
+        <a class="uk-button uk-button-default" href="/plot_log?download=1">Download</a>
+        <button class="uk-button uk-button-default refreshPlotLog" type="button">Refresh</button>
+        <button class="uk-button uk-button-primary uk-modal-close" type="button">Close</button>
+      </p>
+    </div>
+  </div>
+  <!-- plot log -->
+
   <!-- changelog modal: shown after an update, and from the update dialog -->
   <div id="modal-changelog" uk-modal>
     <div class="uk-modal-dialog uk-modal-body">
@@ -2167,6 +2194,18 @@
       jQuery(document).on('click', '.actionTasmota', function (e) {
         e.preventDefault();
         actionTasmota();
+      });
+
+      // Plot log
+      jQuery(document).on('click', '.openPlotLog', function (e) {
+        e.preventDefault();
+        openPlotLog();
+      });
+      jQuery(document).on('click', '.refreshPlotLog', function () {
+        loadPlotLog();
+      });
+      jQuery(document).on('click', '.clearPlotLog', function () {
+        clearPlotLog();
       });
 
       // Timelapse

@@ -1813,6 +1813,40 @@ function updateTimelapses() {
     });
 }
 
+// ---- Plot log ----------------------------------------------------------------------------------
+
+function loadPlotLog() {
+  return axios
+    .get("/plot_log?lines=400", { responseType: "text", transformResponse: [(d) => d] })
+    .then(function (response) {
+      const box = jQuery("#plotLogText");
+      box.text(response.data || "The log is empty.");
+      box.scrollTop(box[0].scrollHeight);
+    })
+    .catch(function (error) {
+      notify(errorMessage(error), "danger");
+    });
+}
+
+function openPlotLog() {
+  loadPlotLog().then(function () {
+    UIkit.modal("#modal-plotlog").show();
+    const box = jQuery("#plotLogText");
+    box.scrollTop(box[0].scrollHeight);
+  });
+}
+
+function clearPlotLog() {
+  UIkit.modal.confirm("Delete the plot log?").then(function () {
+    axios
+      .post("/plot_log/clear")
+      .then(loadPlotLog)
+      .catch(function (error) {
+        notify(errorMessage(error), "danger");
+      });
+  }, function () {});
+}
+
 function openTimelapses() {
   jQuery("#timelapsePlayer").addClass("uk-hidden").removeAttr("src");
   updateTimelapses().then(function () {
@@ -2127,6 +2161,7 @@ function actionOpenConfig() {
           .val(response.data.plotter_flowControl)
           .change();
         jQuery("#plotter_pen_change").val(response.data.plotter_pen_change || "auto");
+        jQuery("#plotter_chunk_size").val(response.data.plotter_chunk_size || "0");
         jQuery("#plotter_profile").val(plotterProfiles[response.data.plotter_profile] ? response.data.plotter_profile : "");
 
         UIkit.modal("#modal-configFile").show();

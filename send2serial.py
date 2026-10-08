@@ -1,4 +1,5 @@
 import collections
+import configparser
 import time
 import math
 import os
@@ -8,6 +9,7 @@ from serial import SerialException
 
 import notification
 import globals
+import plotlog
 import hpgl_analysis
 import plotter_control
 # Shared, live configuration object (updated when settings are saved in the UI)
@@ -230,12 +232,27 @@ def open_port(socketio, port, baud, flowControl, init=True, line=None):
 WRITE_BACKLOG = 1024
 
 
+STALL_LOG_AFTER = 2     # seconds the plotter may refuse data before the plot log says so
+
+
 def wait_for_room(tty):
     """Wait until the port's output queue has room. False when Stop was pressed meanwhile."""
+    since = None
+    reported = False
     while globals.printing:
         if getattr(tty, 'out_waiting', 0) <= WRITE_BACKLOG:
+            if reported:
+                plotlog.log('The plotter takes data again after {:.0f} s'.format(time.time() - since))
             return True
+        if since is None:
+            since = time.time()
+        elif not reported and time.time() - since >= STALL_LOG_AFTER:
+            reported = True
+            plotlog.log('The plotter is not taking data: {} bytes wait in the port (handshaking hold, plotter off or '
+                        'out of paper, or a cable problem)'.format(getattr(tty, 'out_waiting', 0)))
         time.sleep(0.02)
+    if reported:
+        plotlog.log('Gave up waiting for the plotter after {:.0f} s: the plot was stopped'.format(time.time() - since))
     return False
 
 
@@ -322,6 +339,31 @@ def run_commands(socketio, port, baud, flowControl, commands, query=None, line=N
         return None
     finally:
         tty.close()
+
+
+CHUNK_MAX = 1024        # the most bytes per write that the settings accept
+HEARTBEAT_EVERY = 30    # seconds between progress lines in the plot log
+
+
+def chunk_setting():
+    """Bytes per write chosen in the settings; 0 when the sender should decide."""
+    try:
+        value = int(config.get('plotter', 'chunk_size', raw=True, fallback='') or 0)
+    except (ValueError, configparser.Error):
+        return 0
+    return value if 1 <= value <= CHUNK_MAX else 0
+
+
+def chunk_size(flowControl, bufsz, use_buffer):
+    """How many bytes of the file go into one write. HP-IB takes one at a time. With buffer flow control
+    a chosen size is held to half of the plotter's buffer, because CTS and the free space are only looked at
+    between writes."""
+    if flowControl == 'HP-IB':
+        return 1
+    chosen = chunk_setting()
+    if not chosen:
+        return 10 if bufsz < 80 else 30
+    return min(chosen, max(bufsz // 2, 1)) if use_buffer else chosen
 
 
 ETA_EVERY = 5   # seconds between time left updates (they are also sent when the percentage moves)
@@ -529,6 +571,12 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
             socketio.emit('status_log', {'data': 'Size of plotter buffer is ' + str(bufsz) + ' bytes.'})
             socketio.emit('buffer_size', {'data': str(bufsz)})
 
+        chunk = chunk_size(flowControl, bufsz, use_buffer)
+        plotlog.log('Sending {} ({} bytes) to {} at {} baud, {} flow control, {} bytes per write{}'.format(
+            os.path.basename(hpglfile), input_bytes, port, baud, flowControl, chunk,
+            ', plotter buffer {} bytes'.format(bufsz) if use_buffer else ''))
+        last_beat = time.time()
+
         globals.current_file = hpglfile.replace('uploads/', '')
         globals.current_file = globals.current_file[:-4] if cal else globals.current_file.replace('.hpgl', '')
         globals.start_stamp = time.time()
@@ -539,6 +587,13 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
 
         while globals.printing == True:
             try:
+                if time.time() - last_beat >= HEARTBEAT_EVERY:
+                    last_beat = time.time()
+                    plotlog.log('Still going: {} of {} bytes sent{}{}, {} bytes queued in the port'.format(
+                        total_bytes_written, input_bytes,
+                        ', plotter buffer {} of {} free'.format(bufsp, bufsz) if use_buffer else '',
+                        ', held back ({})'.format(globals.wait_reason or 'paused') if globals.paused else '',
+                        getattr(tty, 'out_waiting', 0)))
 
                 if globals.paused:
                     # Hold back the data (the plotter finishes what is in its buffer), but stay
@@ -587,12 +642,7 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                         notify_name, globals.current_file, pen), file=globals.current_file, pen=pen)
                     continue
 
-                if flowControl == 'HP-IB':
-                    size = 1
-                elif bufsz < 80:
-                    size = 10
-                else:
-                    size = 30
+                size = chunk
                 if pen_stops:
                     size = min(size, pen_stops[0][0] - total_bytes_written)    # stop exactly at the pen change
                 if flowControl == CAL_POLL:
@@ -703,6 +753,8 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
                     send_eta(total_bytes_written)
 
             except PORT_ERRORS as e:
+                plotlog.log('Serial error after {} bytes{}: {!r}'.format(
+                    total_bytes_written, '' if globals.printing else ' (the plot was being stopped)', e))
                 if not globals.printing:
                     break
                 if cal:
@@ -749,6 +801,9 @@ def sendToPlotter(socketio, hpglfile, port, baud, flowControl, analysis=None, pe
     finally:
         # Runs on every exit: end of print, stop button, error or exception.
         # Without this the serial port can stay open and "printing" stays True.
+        plotlog.log('Sender ended: {}, {} bytes sent, stop requested: {}'.format(
+            'the whole file was sent' if finished else 'not finished', globals.sent_offset,
+            'yes' if globals.stop_requested else 'no'))
         globals.printing = False
         if hpgl is not None:
             hpgl.close()
